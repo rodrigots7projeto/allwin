@@ -611,6 +611,16 @@ async def futures_my_trades(
     return data
 
 
+@router.get("/trade/futures/ticker")
+async def futures_ticker(symbol: str):
+    """Ticker 24h de um par Futures (público)."""
+    async with httpx.AsyncClient(timeout=8.0) as cli:
+        r = await cli.get(f"{FAPI}/fapi/v1/ticker/24hr", params={"symbol": symbol.upper()})
+        if r.status_code != 200:
+            raise HTTPException(502, f"Binance Futures ticker error: {r.status_code}")
+        return r.json()
+
+
 # ── Binance Web Market APIs (públicos) ────────────────────────────────────────
 
 BWEB = "https://www.binance.com"

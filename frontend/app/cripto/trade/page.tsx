@@ -7,15 +7,25 @@ const SEC_STORE  = "bnb_api_secret";
 
 const PAIRS = [
   "BTCUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT",
-  "DOGEUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","LTCUSDT",
-  "DOTUSDT","UNIUSDT","AAVEUSDT","NEARUSDT","ARBUSDT",
-  "OPUSDT","SUIUSDT","MATICUSDT","BCHUSDT",
+  "DOGEUSDT","ADAUSDT","TRXUSDT","AVAXUSDT","TONUSDT",
+  "SHIBUSDT","LINKUSDT","DOTUSDT","LTCUSDT","ATOMUSDT",
+  "NEARUSDT","MATICUSDT","PEPEUSDT","BCHUSDT","APTUSDT",
+  "UNIUSDT","INJUSDT","AAVEUSDT","ARBUSDT","OPUSDT",
+  "SUIUSDT","STXUSDT","IMXUSDT","FTMUSDT","GRTUSDT",
+  "LDOUSDT","FILUSDT","MKRUSDT","SANDUSDT","MANAUSDT",
+  "CRVUSDT","BLURUSDT","WLDUSDT","SEIUSDT","TIAUSDT",
+  "WIFUSDT","JUPUSDT","BONKUSDT","FLOKIUSDT","NOTUSDT",
+  "PYTHUSDT","APEUSDT","GMXUSDT","DYDXUSDT","GMTUSDT",
 ];
 
 const EMOJI: Record<string,string> = {
-  BTC:"₿",ETH:"Ξ",BNB:"🟡",SOL:"◎",XRP:"✕",DOGE:"🐕",ADA:"₳",
-  AVAX:"🔺",LINK:"🔗",LTC:"Ł",DOT:"●",UNI:"🦄",AAVE:"👻",NEAR:"Ⓝ",
-  ARB:"🔵",OP:"🔴",SUI:"💧",MATIC:"🟣",BCH:"₿",
+  BTC:"₿",ETH:"Ξ",BNB:"🟡",SOL:"◎",XRP:"✕",DOGE:"🐕",ADA:"₳",TRX:"⚡",
+  AVAX:"🔺",TON:"💎",SHIB:"🐶",LINK:"🔗",DOT:"●",LTC:"Ł",ATOM:"⚛️",
+  NEAR:"Ⓝ",MATIC:"🟣",PEPE:"🐸",BCH:"₿",APT:"🔷",UNI:"🦄",INJ:"💉",
+  AAVE:"👻",ARB:"🔵",OP:"🔴",SUI:"💧",STX:"📚",IMX:"🎮",FTM:"👻",
+  GRT:"📊",LDO:"🔷",FIL:"📁",MKR:"🏛️",SAND:"🏖️",MANA:"🌐",CRV:"🔄",
+  BLUR:"💨",WLD:"🌍",SEI:"🌊",TIA:"🔭",WIF:"🐕‍🦺",JUP:"🪐",BONK:"🔨",
+  FLOKI:"⚡",NOT:"❌",PYTH:"🐍",APE:"🐒",GMX:"🔮",DYDX:"📈",GMT:"⏰",
 };
 
 interface HotCoin {

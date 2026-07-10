@@ -12,18 +12,20 @@ import {
   Gauge,
   Bolt,
   FlaskConical,
+  Rocket,
 } from "lucide-react";
 
 const STATIC_TABS = [
-  { href: "/cripto",             label: "Análise",   Icon: Search },
-  { href: "/cripto/comparativo", label: "vs BTC",    Icon: ArrowLeftRight },
-  { href: "/cripto/charts",      label: "Gráficos",  Icon: BarChart2 },
-  { href: "/cripto/sinais",      label: "Sinais IA", Icon: Zap },
-  { href: "/cripto/daytrade",    label: "Day Trade", Icon: Crosshair },
-  { href: "/cripto/futures",     label: "Futures",   Icon: TrendingDown },
-  { href: "/cripto/rsscore",     label: "RS Score",  Icon: Gauge },
-  { href: "/cripto/backtest",    label: "Backtest",  Icon: FlaskConical },
-  { href: "/cripto/trade",       label: "Trade",     Icon: ArrowLeftRight },
+  { href: "/cripto",                 label: "Análise",    Icon: Search },
+  { href: "/cripto/comparativo",     label: "vs BTC",     Icon: ArrowLeftRight },
+  { href: "/cripto/charts",          label: "Gráficos",   Icon: BarChart2 },
+  { href: "/cripto/sinais",          label: "Sinais IA",  Icon: Zap },
+  { href: "/cripto/daytrade",        label: "Day Trade",  Icon: Crosshair },
+  { href: "/cripto/futures",         label: "Futures IA", Icon: TrendingDown },
+  { href: "/cripto/trade-futuros",   label: "Trade Fut.", Icon: Rocket },
+  { href: "/cripto/rsscore",         label: "RS Score",   Icon: Gauge },
+  { href: "/cripto/backtest",        label: "Backtest",   Icon: FlaskConical },
+  { href: "/cripto/trade",           label: "Trade Spot", Icon: ArrowLeftRight },
 ];
 
 export default function CriptoLayout({ children }: { children: React.ReactNode }) {
