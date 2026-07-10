@@ -5,6 +5,7 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  NEXT_PUBLIC_API_URL = "https://allwin-backend-production.up.railway.app/api/v1"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
