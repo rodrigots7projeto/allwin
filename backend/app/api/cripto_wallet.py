@@ -14,7 +14,6 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..cripto.auto_trade_config import CAPITAL_INICIAL
 from ..db.mysql import (
     trade_insert,
     trades_list,

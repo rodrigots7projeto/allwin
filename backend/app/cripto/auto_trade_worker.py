@@ -207,7 +207,7 @@ def _fechar(cfg: dict, simbolo: str, price_brl: float, usd_brl: float,
 
 async def _processar_ciclo() -> None:
     """Executa um ciclo completo: busca scan → processa wallets → salva."""
-    from .cripto_futures import _CACHE as FUT_CACHE  # cache interno do scan
+    from ..api.cripto_futures import _CACHE as FUT_CACHE  # cache do scan em memória
 
     # Pega scan mais recente do cache em memória
     cached = FUT_CACHE.get("ft:scan")
