@@ -16,6 +16,14 @@ import { CarteiraBotoes } from "@/components/carteira/CarteiraBotoes";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+export const dynamicParams = false;
+
+export function generateStaticParams() {
+  return ["PETR4","VALE3","ITUB4","BBDC4","ABEV3","MGLU3","WEGE3","RENT3"].map(
+    (ticker) => ({ ticker })
+  );
+}
+
 interface PageProps {
   params: Promise<{ ticker: string }>;
 }

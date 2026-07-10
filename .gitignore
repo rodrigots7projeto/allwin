@@ -17,3 +17,6 @@ frontend/.env*.local
 *.log
 data/
 infra/
+
+# Local Netlify folder
+.netlify
