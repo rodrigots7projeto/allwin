@@ -1,0 +1,15 @@
+[build]
+  base    = "."
+  command = "pnpm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[[redirects]]
+  from   = "/"
+  to     = "/cripto"
+  status = 302

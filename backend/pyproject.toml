@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "allwin-backend"
+version = "2.0.0"
+description = "Backend AllWin — Data Warehouse Financeiro B3"
+requires-python = ">=3.11"
+dependencies = [
+    # Web framework
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    # HTTP / async
+    "httpx>=0.27.0",
+    # Dados e cálculo
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    # Configuração
+    "python-dotenv>=1.0.0",
+    "pydantic-settings>=2.2.0",
+    # Banco de dados
+    "sqlalchemy[asyncio]>=2.0.0",
+    "asyncpg>=0.29.0",               # driver async para PostgreSQL
+    "alembic>=1.13.0",               # migrações de schema
+    # Cache Redis
+    "redis[asyncio]>=5.0.0",
+    # Scheduler ETL
+    "apscheduler>=3.10.0",
+    # ZIP / compressão
+    "aiofiles>=23.0.0",
+    # Parsing de arquivos B3 (fixed-width)
+    "pyarrow>=14.0.0",
+    # Logs estruturados
+    "structlog>=24.0.0",
+    # LLM — Analista Particular (Feature 1)
+    "openai>=1.50.0",
+    "aiomysql>=0.3.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",
+]

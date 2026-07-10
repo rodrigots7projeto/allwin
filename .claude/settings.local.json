@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from app.api.ranking import router; from app.data.ranking_engine import calcular_scores_empresa, construir_ranking; print\\('OK'\\)\")",
+      "Bash(python -c \"from app.main import app; print\\('main.py OK, routes:', [r.path for r in app.routes if hasattr\\(r, 'path'\\)]\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(Start-Process -FilePath \"powershell.exe\" -ArgumentList \"-NoExit\", \"-Command\", \"cd 'c:/Users/rodri/OneDrive/Anexos/Documentos/GitHub/allwin/backend'; uv run uvicorn app.main:app --reload --port 8000\" -WindowStyle Normal)",
+      "PowerShell(Start-Sleep -Seconds 6; try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/api/v1/ranking/status\" -UseBasicParsing -TimeoutSec 5; $r.Content } catch { $_.Exception.Message })",
+      "PowerShell(Start-Sleep -Seconds 20; try { $f = Invoke-WebRequest -Uri \"http://localhost:3000\" -UseBasicParsing -TimeoutSec 15; Write-Host \"Frontend: $\\($f.StatusCode\\)\" } catch { Write-Host \"Frontend: $\\($_.Exception.Message\\)\" })",
+      "PowerShell(Start-Sleep -Seconds 20; try { $f = Invoke-WebRequest -Uri \"http://localhost:3000/ranking\" -UseBasicParsing -TimeoutSec 20; Write-Host \"Ranking page: $\\($f.StatusCode\\)\" } catch { Write-Host \"Frontend: $\\($_.Exception.Message\\)\" })",
+      "PowerShell(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue)",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/api/v1/ranking/status\" -UseBasicParsing -TimeoutSec 5; $r.Content } catch { $_.Exception.Message })",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/ranking)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8000,3000 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalPort, @{N='PID';E={$_.OwningProcess}})",
+      "PowerShell(Start-Process -FilePath \"powershell.exe\" -ArgumentList \"-NoExit\", \"-Command\", \"cd 'c:\\\\Users\\\\rodri\\\\OneDrive\\\\Anexos\\\\Documentos\\\\GitHub\\\\allwin\\\\frontend'; npm run dev\" -WindowStyle Normal)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 3000,3001,8000 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalPort, @{N='PID';E={$_.OwningProcess}})",
+      "PowerShell(Start-Process -FilePath \"powershell.exe\" -ArgumentList \"-NoExit\", \"-Command\", \"cd 'c:\\\\Users\\\\rodri\\\\OneDrive\\\\Anexos\\\\Documentos\\\\GitHub\\\\allwin\\\\backend'; uv run uvicorn app.main:app --reload --port 8000\" -WindowStyle Normal)",
+      "Bash(curl -s -o /dev/null -w \"backend:%{http_code}\" http://localhost:8000/health)",
+      "Bash(curl -s -o /dev/null -w \"frontend:%{http_code}\" http://localhost:3000)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/comparar)",
+      "Bash(curl -s -o /dev/null -w \"rs-analisa: %{http_code}\\\\n\" http://localhost:3000/rs-analisa)",
+      "Bash(curl -s -o /dev/null -w \"comparar: %{http_code}\\\\n\" http://localhost:3000/comparar)",
+      "Bash(curl -s -o /dev/null -w \"ranking: %{http_code}\\\\n\" http://localhost:3000/ranking)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:8000/api/v1/ranking/status\")"
+    ]
+  }
+}
