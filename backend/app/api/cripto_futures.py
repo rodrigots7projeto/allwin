@@ -28,6 +28,15 @@ _BTC_DOM_CACHE: Optional[tuple[float, float, str]] = None  # (timestamp, pct, tr
 BINANCE_SPOT_API    = "https://api.binance.com/api/v3"
 BINANCE_FUTURES_API = "https://fapi.binance.com"
 
+# Hosts alternativos para klines spot (Railway/AWS bloqueia api.binance.com)
+_SPOT_KLINE_HOSTS = [
+    "https://api.binance.com/api/v3",
+    "https://api1.binance.com/api/v3",
+    "https://api2.binance.com/api/v3",
+    "https://api3.binance.com/api/v3",
+    "https://data-api.binance.vision/api/v3",
+]
+
 # Moedas suportadas (USDT perp futures — top 50 por liquidez)
 FT_COINS: dict[str, str] = {
     "BTC":   "BTCUSDT",
@@ -185,39 +194,45 @@ async def _fetch_futures_klines(
                 return parsed
     except Exception:
         pass
-    # 2. Fallback: Binance Spot (mesmos dados OHLCV para análise técnica)
-    try:
-        r = await cli.get(
-            f"{BINANCE_SPOT_API}/klines",
-            params={"symbol": symbol, "interval": interval, "limit": limit},
-        )
-        if r.status_code == 200:
-            return _parse_klines(r.json())
-    except Exception:
-        pass
+    # 2. Fallback: múltiplos hosts spot (Railway/AWS pode bloquear api.binance.com)
+    params = {"symbol": symbol, "interval": interval, "limit": limit}
+    for host in _SPOT_KLINE_HOSTS:
+        try:
+            r = await cli.get(f"{host}/klines", params=params)
+            if r.status_code == 200:
+                parsed = _parse_klines(r.json())
+                if parsed:
+                    return parsed
+        except Exception:
+            continue
     return []
 
 
 # ── Binance Futures Ticker ────────────────────────────────────────────────────
 
 async def _fetch_futures_ticker(cli: httpx.AsyncClient, symbol: str) -> dict:
-    try:
-        r = await cli.get(
-            f"{BINANCE_FUTURES_API}/fapi/v1/ticker/24hr",
-            params={"symbol": symbol},
-        )
-        if r.status_code == 200:
-            d = r.json()
-            return {
-                "preco":     float(d.get("lastPrice", 0)),
-                "var24h":    float(d.get("priceChangePercent", 0)),
-                "volume24h": float(d.get("quoteVolume", 0)),
-                "high24h":   float(d.get("highPrice", 0)),
-                "low24h":    float(d.get("lowPrice", 0)),
-                "trades24h": int(d.get("count", 0)),
-            }
-    except Exception:
-        pass
+    # Tenta futures API, depois spot como fallback
+    sources = [
+        (f"{BINANCE_FUTURES_API}/fapi/v1/ticker/24hr", {"symbol": symbol}),
+    ] + [
+        (f"{host}/ticker/24hr", {"symbol": symbol}) for host in _SPOT_KLINE_HOSTS
+    ]
+    for url, params in sources:
+        try:
+            r = await cli.get(url, params=params)
+            if r.status_code == 200:
+                d = r.json()
+                if isinstance(d, dict) and d.get("lastPrice"):
+                    return {
+                        "preco":     float(d.get("lastPrice", 0)),
+                        "var24h":    float(d.get("priceChangePercent", 0)),
+                        "volume24h": float(d.get("quoteVolume", 0)),
+                        "high24h":   float(d.get("highPrice", 0)),
+                        "low24h":    float(d.get("lowPrice", 0)),
+                        "trades24h": int(d.get("count", 0)),
+                    }
+        except Exception:
+            continue
     return {}
 
 

@@ -22,7 +22,15 @@ _TTL_USDRL = 30        # 30s para cotação USD/BRL (cotação da hora)
 
 _USD_BRL_CACHE: Optional[tuple[float, float]] = None  # (timestamp, rate)
 
-BINANCE_API = "https://api.binance.com/api/v3"
+# Hosts em ordem de preferência — Railway (US/AWS) tem restrição em api.binance.com
+_KLINE_HOSTS = [
+    "https://api.binance.com/api/v3",
+    "https://api1.binance.com/api/v3",
+    "https://api2.binance.com/api/v3",
+    "https://api3.binance.com/api/v3",
+    "https://data-api.binance.vision/api/v3",
+]
+BINANCE_API = _KLINE_HOSTS[0]
 
 # Moedas suportadas (Binance USDT spot)
 DT_COINS: dict[str, str] = {
@@ -98,33 +106,36 @@ def _parse_klines(raw: list) -> list[dict]:
 
 
 async def _fetch_klines(cli: httpx.AsyncClient, symbol: str, interval: str, limit: int) -> list[dict]:
-    try:
-        r = await cli.get(
-            f"{BINANCE_API}/klines",
-            params={"symbol": symbol, "interval": interval, "limit": limit},
-        )
-        if r.status_code == 200:
-            return _parse_klines(r.json())
-    except Exception:
-        pass
+    params = {"symbol": symbol, "interval": interval, "limit": limit}
+    for host in _KLINE_HOSTS:
+        try:
+            r = await cli.get(f"{host}/klines", params=params)
+            if r.status_code == 200:
+                parsed = _parse_klines(r.json())
+                if parsed:
+                    return parsed
+        except Exception:
+            continue
     return []
 
 
 async def _fetch_ticker(cli: httpx.AsyncClient, symbol: str) -> dict:
-    try:
-        r = await cli.get(f"{BINANCE_API}/ticker/24hr", params={"symbol": symbol})
-        if r.status_code == 200:
-            d = r.json()
-            return {
-                "preco":    float(d.get("lastPrice", 0)),
-                "var24h":   float(d.get("priceChangePercent", 0)),
-                "volume24h": float(d.get("quoteVolume", 0)),
-                "high24h":  float(d.get("highPrice", 0)),
-                "low24h":   float(d.get("lowPrice", 0)),
-                "trades24h": int(d.get("count", 0)),
-            }
-    except Exception:
-        pass
+    for host in _KLINE_HOSTS:
+        try:
+            r = await cli.get(f"{host}/ticker/24hr", params={"symbol": symbol})
+            if r.status_code == 200:
+                d = r.json()
+                if isinstance(d, dict) and d.get("lastPrice"):
+                    return {
+                        "preco":     float(d.get("lastPrice", 0)),
+                        "var24h":    float(d.get("priceChangePercent", 0)),
+                        "volume24h": float(d.get("quoteVolume", 0)),
+                        "high24h":   float(d.get("highPrice", 0)),
+                        "low24h":    float(d.get("lowPrice", 0)),
+                        "trades24h": int(d.get("count", 0)),
+                    }
+        except Exception:
+            continue
     return {}
 
 
@@ -143,15 +154,18 @@ async def _fetch_usd_brl() -> Optional[float]:
     global _USD_BRL_CACHE
     if _USD_BRL_CACHE and time.time() - _USD_BRL_CACHE[0] < _TTL_USDRL:
         return _USD_BRL_CACHE[1]
-    try:
-        async with httpx.AsyncClient(timeout=6.0) as cli:
-            r = await cli.get(f"{BINANCE_API}/ticker/price", params={"symbol": "USDTBRL"})
-            r.raise_for_status()
-            rate = float(r.json()["price"])
-            _USD_BRL_CACHE = (time.time(), rate)
-            return rate
-    except Exception:
-        # Fallback: AwesomeAPI
+    for host in _KLINE_HOSTS:
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as cli:
+                r = await cli.get(f"{host}/ticker/price", params={"symbol": "USDTBRL"})
+                d = r.json()
+                if r.status_code == 200 and isinstance(d, dict) and d.get("price"):
+                    rate = float(d["price"])
+                    _USD_BRL_CACHE = (time.time(), rate)
+                    return rate
+        except Exception:
+            continue
+    if True:  # Fallback: AwesomeAPI
         try:
             async with httpx.AsyncClient(timeout=6.0) as cli:
                 r = await cli.get("https://economia.awesomeapi.com.br/json/last/USD-BRL")
