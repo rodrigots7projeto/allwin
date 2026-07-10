@@ -44,6 +44,42 @@ async def close_pool() -> None:
 # ── DDL — cria tabelas se não existirem ───────────────────────────────────────
 
 DDL = """
+CREATE TABLE IF NOT EXISTS sim_wallets (
+    perfil_id     VARCHAR(50)  NOT NULL,
+    wallet_tipo   VARCHAR(20)  NOT NULL DEFAULT 'futures',
+    saldo_inicial FLOAT        NOT NULL DEFAULT 100000,
+    saldo_livre   FLOAT        NOT NULL DEFAULT 100000,
+    positions     JSON,
+    criado        DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    atualizado    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (perfil_id, wallet_tipo),
+    INDEX idx_wt (wallet_tipo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS sim_trades (
+    id              VARCHAR(80)  NOT NULL PRIMARY KEY,
+    perfil_id       VARCHAR(50)  NOT NULL,
+    wallet_tipo     VARCHAR(20)  NOT NULL DEFAULT 'futures',
+    simbolo         VARCHAR(20)  NOT NULL,
+    tipo            CHAR(1)      NOT NULL,
+    direction       VARCHAR(10)  NOT NULL,
+    price_brl       FLOAT        NOT NULL,
+    amount_brl      FLOAT        NOT NULL,
+    fee             FLOAT        DEFAULT 0,
+    pnl_brl         FLOAT,
+    pct             FLOAT,
+    score           FLOAT,
+    auto_trade      TINYINT(1)   DEFAULT 1,
+    grade           VARCHAR(5),
+    motivo_entrada  TEXT,
+    motivo_saida    TEXT,
+    trade_time      BIGINT       NOT NULL,
+    criado_em       DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_st_perfil (perfil_id, wallet_tipo),
+    INDEX idx_st_time   (trade_time),
+    INDEX idx_st_sim    (simbolo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS ft_sinais (
     id            BIGINT AUTO_INCREMENT PRIMARY KEY,
     simbolo       VARCHAR(20)  NOT NULL,
@@ -205,6 +241,121 @@ async def ultimo_scan() -> Optional[dict]:
     except Exception as e:
         print(f"[MySQL] Erro ao buscar scan: {e}")
     return None
+
+
+# ── Sim Wallets ───────────────────────────────────────────────────────────────
+
+async def wallet_load_all(tipo: str = "futures") -> dict[str, dict]:
+    """Carrega todas as carteiras de um tipo do MySQL."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT perfil_id, saldo_inicial, saldo_livre, positions FROM sim_wallets WHERE wallet_tipo=%s",
+                    (tipo,)
+                )
+                rows = await cur.fetchall()
+                result = {}
+                for r in rows:
+                    result[r["perfil_id"]] = {
+                        "saldo_inicial": r["saldo_inicial"],
+                        "saldo_livre":   r["saldo_livre"],
+                        "positions":     json.loads(r["positions"] or "{}"),
+                    }
+                return result
+    except Exception as e:
+        print(f"[MySQL] wallet_load_all erro: {e}")
+        return {}
+
+
+async def wallet_upsert(perfil_id: str, tipo: str, saldo_inicial: float, saldo_livre: float, positions: dict) -> None:
+    """Cria ou atualiza uma carteira no MySQL."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    INSERT INTO sim_wallets (perfil_id, wallet_tipo, saldo_inicial, saldo_livre, positions)
+                    VALUES (%s,%s,%s,%s,%s)
+                    ON DUPLICATE KEY UPDATE
+                      saldo_livre=%s, positions=%s, atualizado=NOW()
+                """, (
+                    perfil_id, tipo, saldo_inicial, saldo_livre,
+                    json.dumps(positions, ensure_ascii=False),
+                    saldo_livre,
+                    json.dumps(positions, ensure_ascii=False),
+                ))
+    except Exception as e:
+        print(f"[MySQL] wallet_upsert erro: {e}")
+
+
+async def wallet_reset(perfil_id: str, tipo: str, saldo_inicial: float) -> None:
+    """Zera uma carteira (saldo volta ao inicial, positions vazio)."""
+    await wallet_upsert(perfil_id, tipo, saldo_inicial, saldo_inicial, {})
+
+
+async def trade_insert(trade: dict, tipo: str = "futures") -> None:
+    """Persiste um trade no MySQL."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    INSERT IGNORE INTO sim_trades
+                      (id, perfil_id, wallet_tipo, simbolo, tipo, direction,
+                       price_brl, amount_brl, fee, pnl_brl, pct, score,
+                       auto_trade, grade, motivo_entrada, motivo_saida, trade_time)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+                    trade.get("id"),
+                    trade.get("perfil_id"),
+                    tipo,
+                    trade.get("simbolo"),
+                    trade.get("tipo"),
+                    trade.get("direction"),
+                    trade.get("price_brl"),
+                    trade.get("amount_brl"),
+                    trade.get("fee", 0),
+                    trade.get("pnl_brl"),
+                    trade.get("pct"),
+                    trade.get("score"),
+                    1 if trade.get("auto", True) else 0,
+                    trade.get("grade"),
+                    trade.get("motivo_entrada"),
+                    trade.get("motivo_saida"),
+                    trade.get("time", int(time.time() * 1000)),
+                ))
+    except Exception as e:
+        print(f"[MySQL] trade_insert erro: {e}")
+
+
+async def trades_list(perfil_id: Optional[str] = None, tipo: str = "futures", limit: int = 500) -> list[dict]:
+    """Lista trades de uma carteira, mais recentes primeiro."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                if perfil_id:
+                    await cur.execute("""
+                        SELECT id, perfil_id, simbolo, tipo, direction, price_brl, amount_brl,
+                               fee, pnl_brl, pct, score, auto_trade as auto, grade,
+                               motivo_entrada, motivo_saida, trade_time as time
+                        FROM sim_trades WHERE perfil_id=%s AND wallet_tipo=%s
+                        ORDER BY trade_time DESC LIMIT %s
+                    """, (perfil_id, tipo, limit))
+                else:
+                    await cur.execute("""
+                        SELECT id, perfil_id, simbolo, tipo, direction, price_brl, amount_brl,
+                               fee, pnl_brl, pct, score, auto_trade as auto, grade,
+                               motivo_entrada, motivo_saida, trade_time as time
+                        FROM sim_trades WHERE wallet_tipo=%s
+                        ORDER BY trade_time DESC LIMIT %s
+                    """, (tipo, limit))
+                return list(await cur.fetchall())
+    except Exception as e:
+        print(f"[MySQL] trades_list erro: {e}")
+        return []
 
 
 async def historico_sinais(simbolo: Optional[str] = None, limit: int = 50) -> list[dict]:

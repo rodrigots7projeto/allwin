@@ -274,6 +274,33 @@ function DirectionBadge({ dir, confidence }: { dir: string; confidence?: number 
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 
+// Sync trade para backend sem bloquear UI
+async function _syncTrade(trade: FuturesTrade & { perfil_id?: string }, perfilId: string) {
+  try {
+    await fetch(`${API}/cripto/wallets/futures/trade`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...trade, perfil_id: perfilId }),
+    });
+  } catch { /* silencioso — localStorage é o fallback */ }
+}
+
+async function _syncWallet(perfilId: string, w: FuturesWallet) {
+  try {
+    await fetch(`${API}/cripto/wallets/futures/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        perfil_id:     perfilId,
+        saldo_inicial: w.saldo_inicial,
+        saldo_livre:   w.saldo_livre,
+        positions:     w.positions,
+        trades:        [],   // trades são salvos individualmente via _syncTrade
+      }),
+    });
+  } catch { /* silencioso */ }
+}
+
 function useFuturesWallet() {
   const [wallets, setWallets] = useState<Record<string, FuturesWallet>>(() => {
     try {
@@ -282,6 +309,29 @@ function useFuturesWallet() {
     } catch {}
     return emptyMultiFutures();
   });
+
+  // Carrega do backend na montagem — sobrescreve localStorage com dado persistido
+  useEffect(() => {
+    fetch(`${API}/cripto/wallets/futures`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: Record<string, FuturesWallet> | null) => {
+        if (!data || Object.keys(data).length === 0) return;
+        const merged = { ...emptyMultiFutures() };
+        for (const [pid, w] of Object.entries(data)) {
+          if (merged[pid]) {
+            merged[pid] = {
+              ...merged[pid],
+              saldo_livre: w.saldo_livre ?? merged[pid].saldo_livre,
+              positions:   w.positions   ?? {},
+              trades:      Array.isArray(w.trades) ? w.trades : [],
+            };
+          }
+        }
+        setWallets(merged);
+        try { localStorage.setItem(FUT_WALLET_KEY, JSON.stringify(merged)); } catch {}
+      })
+      .catch(() => { /* usa localStorage */ });
+  }, []);
 
   const persist = (next: Record<string, FuturesWallet>) => {
     try { localStorage.setItem(FUT_WALLET_KEY, JSON.stringify(next)); } catch {}
@@ -302,13 +352,8 @@ function useFuturesWallet() {
       if (amount < 50) return prev;
       const fee = amount * FEE_RATE;
       const units = (amount - fee) / price_brl;
-      // SL/TP depend on direction
-      const sl_price = direction === "LONG"
-        ? price_brl * (1 - cfg.sl_pct)
-        : price_brl * (1 + cfg.sl_pct);
-      const tp_price = direction === "LONG"
-        ? price_brl * (1 + cfg.tp_pct)
-        : price_brl * (1 - cfg.tp_pct);
+      const sl_price = direction === "LONG" ? price_brl * (1 - cfg.sl_pct) : price_brl * (1 + cfg.sl_pct);
+      const tp_price = direction === "LONG" ? price_brl * (1 + cfg.tp_pct) : price_brl * (1 - cfg.tp_pct);
       const pos: FuturesPos = {
         simbolo, direction, units, amount_brl: amount,
         entry_price_brl: price_brl, last_price_brl: price_brl, last_usd_brl: usd_brl,
@@ -321,7 +366,11 @@ function useFuturesWallet() {
         price_brl, amount_brl: amount, fee, time: Date.now(), score, auto, grade,
         motivo_entrada: `Score ${score} | ${cfg.nome} ${cfg.nivel} | ${direction}${cfg.stake_dupla_score != null && score >= cfg.stake_dupla_score ? " | STAKE DOBRADA" : ""}`,
       };
-      return { ...prev, [perfilId]: { ...w, saldo_livre: w.saldo_livre - amount, positions: { ...w.positions, [simbolo]: pos }, trades: [...w.trades, trade] } };
+      const next = { ...prev, [perfilId]: { ...w, saldo_livre: w.saldo_livre - amount, positions: { ...w.positions, [simbolo]: pos }, trades: [...w.trades, trade] } };
+      // Sync assíncrono sem bloquear UI
+      _syncTrade(trade, perfilId);
+      _syncWallet(perfilId, next[perfilId]);
+      return next;
     });
   }, []);
 
@@ -331,19 +380,19 @@ function useFuturesWallet() {
       if (!w) return prev;
       const pos = w.positions[simbolo];
       if (!pos) return prev;
-      // P&L depends on direction
       const sell_value = pos.units * price_brl;
-      const pnl_brl = pos.direction === "LONG"
-        ? sell_value - pos.amount_brl
-        : pos.amount_brl - sell_value;
+      const pnl_brl = pos.direction === "LONG" ? sell_value - pos.amount_brl : pos.amount_brl - sell_value;
       const trade: FuturesTrade = {
         id: `${Date.now()}-${perfilId}-${simbolo}-V`, simbolo, tipo: "V", direction: pos.direction,
         price_brl, amount_brl: sell_value, pnl_brl, pct: (pnl_brl / pos.amount_brl) * 100,
         time: Date.now(), score, auto, motivo_saida,
       };
       const { [simbolo]: _r, ...rest } = w.positions;
-      const devolver = pos.amount_brl + pnl_brl; // return original stake ± P&L
-      return { ...prev, [perfilId]: { ...w, saldo_livre: w.saldo_livre + devolver, positions: rest, trades: [...w.trades, trade] } };
+      const devolver = pos.amount_brl + pnl_brl;
+      const next = { ...prev, [perfilId]: { ...w, saldo_livre: w.saldo_livre + devolver, positions: rest, trades: [...w.trades, trade] } };
+      _syncTrade(trade, perfilId);
+      _syncWallet(perfilId, next[perfilId]);
+      return next;
     });
   }, []);
 
@@ -368,7 +417,10 @@ function useFuturesWallet() {
 
   const resetPerfil = useCallback((perfilId: string) => {
     const cfg = PERFIS_FUTURES.find(p => p.id === perfilId);
-    upd(prev => ({ ...prev, [perfilId]: emptyFuturesWallet(cfg?.capital_inicial ?? 100000) }));
+    const cap = cfg?.capital_inicial ?? 100000;
+    upd(prev => ({ ...prev, [perfilId]: emptyFuturesWallet(cap) }));
+    // Reset no backend
+    fetch(`${API}/cripto/wallets/futures/${perfilId}?saldo_inicial=${cap}`, { method: "DELETE" }).catch(() => {});
   }, []);
 
   const resetAll = useCallback(() => {
@@ -1526,28 +1578,113 @@ function FuturesAllWalletsView({ wallets, scan, autoTrade, setAutoTrade, onFecha
                 </div>
               )}
 
-              {/* Expanded stats */}
-              {isExpanded && (
-                <div className="border-t px-4 py-3 flex flex-col gap-2" style={{ borderColor: "var(--border)", background: "var(--bg)" }}>
-                  <div className="grid grid-cols-3 gap-2 text-[10px]">
-                    {[
-                      { l: "Saldo livre", v: `R$ ${stats.capital.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`, c: "var(--text-primary)" },
-                      { l: "Win Rate", v: stats.ops > 0 ? `${stats.win_rate.toFixed(0)}%` : "—", c: stats.win_rate >= 50 ? "#10b981" : "#ef4444" },
-                      { l: "P. Factor", v: stats.ops > 0 ? (stats.profit_factor === 999 ? "∞" : stats.profit_factor.toFixed(2)) : "—", c: stats.profit_factor >= 1.2 ? "#10b981" : "#ef4444" },
-                    ].map(({ l, v, c }) => (
-                      <div key={l} className="rounded-lg p-2" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-                        <div style={{ color: "var(--text-muted)" }}>{l}</div>
-                        <div className="font-bold mt-0.5" style={{ color: c }}>{v}</div>
+              {/* Expanded — trade log */}
+              {isExpanded && (() => {
+                const allTrades  = [...w.trades].sort((a, b) => b.time - a.time);
+                const vendas     = allTrades.filter(t => t.tipo === "V");
+                const longs      = vendas.filter(t => t.direction === "LONG").length;
+                const shorts     = vendas.filter(t => t.direction === "SHORT").length;
+                const pnlFechado = vendas.reduce((a, t) => a + (t.pnl_brl ?? 0), 0);
+                const wins       = vendas.filter(t => (t.pnl_brl ?? 0) > 0).length;
+                return (
+                  <div className="border-t flex flex-col" style={{ borderColor: "var(--border)", background: "var(--bg)" }}>
+                    {/* Summary chips */}
+                    <div className="grid grid-cols-4 gap-1.5 px-3 pt-3">
+                      {[
+                        { l: "Operações", v: String(vendas.length), c: "var(--text-primary)" },
+                        { l: "LONG", v: String(longs), c: "#10b981" },
+                        { l: "SHORT", v: String(shorts), c: "#ef4444" },
+                        { l: "P&L Fechado", v: `${pnlFechado >= 0 ? "+" : ""}R$ ${Math.abs(pnlFechado).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`, c: pnlFechado >= 0 ? "#10b981" : "#ef4444" },
+                      ].map(({ l, v, c }) => (
+                        <div key={l} className="rounded-lg p-2 text-[10px]" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+                          <div style={{ color: "var(--text-muted)" }}>{l}</div>
+                          <div className="font-bold mt-0.5 tabular-nums" style={{ color: c }}>{v}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Win rate + extra */}
+                    <div className="flex gap-2 px-3 pt-1.5 pb-2 text-[9px]" style={{ color: "var(--text-muted)" }}>
+                      <span>Win Rate: <b style={{ color: stats.win_rate >= 50 ? "#10b981" : "#ef4444" }}>{vendas.length > 0 ? `${stats.win_rate.toFixed(0)}%` : "—"}</b></span>
+                      <span>·</span>
+                      <span>Wins: <b style={{ color: "#10b981" }}>{wins}</b></span>
+                      <span>·</span>
+                      <span>P.Factor: <b style={{ color: stats.profit_factor >= 1.2 ? "#10b981" : "#ef4444" }}>{vendas.length > 0 ? (stats.profit_factor === 999 ? "∞" : stats.profit_factor.toFixed(2)) : "—"}</b></span>
+                      <span>·</span>
+                      <span>DD: <b style={{ color: stats.drawdown > 10 ? "#ef4444" : "var(--text-primary)" }}>{stats.drawdown.toFixed(1)}%</b></span>
+                    </div>
+
+                    {/* Trade log */}
+                    {allTrades.length === 0 ? (
+                      <div className="px-3 pb-3 text-[10px]" style={{ color: "var(--text-muted)" }}>Nenhuma operação registrada ainda.</div>
+                    ) : (
+                      <div className="overflow-y-auto" style={{ maxHeight: 280 }}>
+                        <table className="w-full text-[10px]" style={{ borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ background: "var(--bg-card)", borderBottom: "1px solid var(--border)" }}>
+                              {["#", "Moeda", "Tipo", "Dir", "Preço", "R$", "P&L", "Score", "Motivo"].map(h => (
+                                <th key={h} className="px-2 py-1 text-left font-semibold" style={{ color: "var(--text-muted)" }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {allTrades.map((t, i) => {
+                              const isOpen  = t.tipo === "C";
+                              const pnl     = t.pnl_brl ?? 0;
+                              const motivo  = isOpen ? (t.motivo_entrada ?? "—") : (t.motivo_saida ?? "—");
+                              const dt      = new Date(t.time);
+                              const hora    = `${dt.getDate().toString().padStart(2,"0")}/${(dt.getMonth()+1).toString().padStart(2,"0")} ${dt.getHours().toString().padStart(2,"0")}:${dt.getMinutes().toString().padStart(2,"0")}`;
+                              return (
+                                <tr key={t.id} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)" }}>
+                                  <td className="px-2 py-1.5 tabular-nums" style={{ color: "var(--text-muted)" }}>{hora}</td>
+                                  <td className="px-2 py-1.5 font-bold" style={{ color: "var(--text-primary)" }}>
+                                    {(COIN_EMOJI[t.simbolo] ?? "○")} {t.simbolo}
+                                  </td>
+                                  <td className="px-2 py-1.5">
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold" style={{
+                                      background: isOpen ? "rgba(59,130,246,0.15)" : "rgba(107,114,128,0.15)",
+                                      color: isOpen ? "#60a5fa" : "#9ca3af",
+                                    }}>
+                                      {isOpen ? "ABRE" : "FECHA"}
+                                    </span>
+                                  </td>
+                                  <td className="px-2 py-1.5">
+                                    <span className="font-bold" style={{ color: t.direction === "LONG" ? "#10b981" : "#ef4444" }}>
+                                      {t.direction}
+                                    </span>
+                                  </td>
+                                  <td className="px-2 py-1.5 tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                                    R$ {t.price_brl.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}
+                                  </td>
+                                  <td className="px-2 py-1.5 tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                                    {t.amount_brl.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
+                                  </td>
+                                  <td className="px-2 py-1.5 tabular-nums font-bold" style={{ color: isOpen ? "var(--text-muted)" : pnl >= 0 ? "#10b981" : "#ef4444" }}>
+                                    {isOpen ? "—" : `${pnl >= 0 ? "+" : ""}R$ ${Math.abs(pnl).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}`}
+                                  </td>
+                                  <td className="px-2 py-1.5 tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                                    {t.score?.toFixed(0) ?? "—"}
+                                  </td>
+                                  <td className="px-2 py-1.5" style={{ color: "var(--text-muted)", maxWidth: 120 }}>
+                                    <span className="truncate block" title={motivo}>{motivo.slice(0, 30)}{motivo.length > 30 ? "…" : ""}</span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
                       </div>
-                    ))}
+                    )}
+
+                    <div className="px-3 py-2 flex justify-end border-t" style={{ borderColor: "var(--border)" }}>
+                      <button onClick={() => onReset(cfg.id)}
+                        className="text-[9px] px-2 py-1 rounded border transition-colors"
+                        style={{ borderColor: "rgba(239,68,68,0.3)", color: "#ef4444" }}>
+                        Zerar carteira
+                      </button>
+                    </div>
                   </div>
-                  <button onClick={() => onReset(cfg.id)}
-                    className="text-[9px] px-2 py-1 rounded border self-start transition-colors"
-                    style={{ borderColor: "rgba(239,68,68,0.3)", color: "#ef4444" }}>
-                    Zerar carteira
-                  </button>
-                </div>
-              )}
+                );
+              })()}
             </div>
           );
         })}

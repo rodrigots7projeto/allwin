@@ -23,6 +23,7 @@ from .api.cripto_daytrade import router as router_cripto_daytrade
 from .api.cripto_futures import router as router_cripto_futures
 from .api.cripto_motor import router as router_cripto_motor
 from .api.cripto_sinais import router as router_cripto_sinais
+from .api.cripto_wallet import router as router_cripto_wallet
 from .config import settings
 
 # Módulos B3/CVM — opcionais (dependem de dados locais e PostgreSQL)
@@ -54,13 +55,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[AVISO] PostgreSQL indisponivel ({e}) -- v2 endpoints desativados")
 
-    # MySQL (Cripto — sinais, scan, histórico)
+    # MySQL (Cripto — sinais, scan, histórico, wallets)
     try:
         from .db.mysql import init_tables
         await init_tables()
         print("[OK] MySQL conectado — tabelas cripto prontas")
     except Exception as e:
         print(f"[AVISO] MySQL indisponivel ({e}) -- persistencia cripto desativada")
+
+    # Auto-trade worker (roda 24/7 em background)
+    try:
+        import asyncio
+        from .cripto.auto_trade_worker import auto_trade_loop
+        asyncio.create_task(auto_trade_loop())
+        print("[OK] Auto-trade worker iniciado")
+    except Exception as e:
+        print(f"[AVISO] Auto-trade worker nao iniciado ({e})")
 
     yield
 
@@ -136,6 +146,7 @@ app.include_router(router_cripto_futures,  prefix="/api/v1")
 app.include_router(router_cripto_sinais,   prefix="/api/v1")
 app.include_router(router_cripto_motor,    prefix="/api/v1")
 app.include_router(router_cripto_comp,     prefix="/api/v1")
+app.include_router(router_cripto_wallet,   prefix="/api/v1")
 app.include_router(router_cripto,          prefix="/api/v1")
 
 

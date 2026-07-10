@@ -490,6 +490,40 @@ function emptyMultiWallet(): Record<string, SimWallet> {
   return Object.fromEntries(PERFIS.map(p => [p.id, emptyWallet(p.capital_inicial ?? 100000)]));
 }
 
+async function _dtSyncTrade(trade: SimTrade, perfilId: string) {
+  try {
+    await fetch(`${API}/cripto/wallets/daytrade/trade`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: trade.id, perfil_id: perfilId, simbolo: trade.simbolo,
+        tipo: trade.tipo, direction: "LONG",
+        price_brl: trade.price_brl, amount_brl: trade.amount_brl,
+        fee: trade.fee ?? 0, pnl_brl: trade.pnl_brl, pct: trade.pct,
+        score: trade.score, auto: trade.auto,
+        motivo_entrada: trade.motivo_entrada, motivo_saida: trade.motivo_saida,
+        time: trade.time,
+      }),
+    });
+  } catch { /* silencioso */ }
+}
+
+async function _dtSyncWallet(perfilId: string, w: SimWallet) {
+  try {
+    await fetch(`${API}/cripto/wallets/daytrade/sync`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        perfil_id: perfilId,
+        saldo_inicial: w.saldo_inicial,
+        saldo_livre: w.saldo_livre,
+        positions: w.positions,
+        trades: [],
+      }),
+    });
+  } catch { /* silencioso */ }
+}
+
 function useMultiWallet() {
   const [wallets, setWallets] = useState<Record<string, SimWallet>>(() => {
     try {
@@ -502,6 +536,31 @@ function useMultiWallet() {
     } catch {}
     return emptyMultiWallet();
   });
+
+  // Carrega estado persistido do backend na montagem
+  useEffect(() => {
+    fetch(`${API}/cripto/wallets/daytrade`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data: Record<string, SimWallet> | null) => {
+        if (!data || Object.keys(data).length === 0) return;
+        const base = emptyMultiWallet();
+        const merged = { ...base };
+        for (const [pid, w] of Object.entries(data)) {
+          if (merged[pid]) {
+            merged[pid] = {
+              ...merged[pid],
+              saldo_livre: w.saldo_livre ?? merged[pid].saldo_livre,
+              positions:   w.positions   ?? {},
+              trades:      Array.isArray(w.trades) ? w.trades : [],
+            };
+          }
+        }
+        setWallets(merged);
+        try { localStorage.setItem(MULTI_WALLET_KEY, JSON.stringify(merged)); } catch {}
+      })
+      .catch(() => { /* usa localStorage */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const persist = (next: Record<string, SimWallet>) => {
     try { localStorage.setItem(MULTI_WALLET_KEY, JSON.stringify(next)); } catch {}
@@ -518,11 +577,9 @@ function useMultiWallet() {
       const w = prev[perfilId];
       if (!w) return prev;
       if (w.positions[simbolo]) return prev;
-      // sem limite de posições — compra enquanto houver saldo
       const stakeBase  = cfg.stake_base ?? TRADE_SIZE;
       const stakeAlvo  = (cfg.stake_dupla_score != null && score >= cfg.stake_dupla_score)
-        ? stakeBase * 2   // dobra a stake em oportunidade excepcional
-        : stakeBase;
+        ? stakeBase * 2 : stakeBase;
       const amount = Math.min(stakeAlvo, w.saldo_livre);
       if (amount < 50) return prev;
       const fee = amount * FEE_RATE;
@@ -542,11 +599,14 @@ function useMultiWallet() {
         stop_loss: pos.stop_loss_price, take_profit: pos.take_profit_price,
         sl_pct: cfg.sl_pct, tp_pct: cfg.tp_pct,
       };
-      return { ...prev, [perfilId]: {
+      const next = { ...prev, [perfilId]: {
         ...w, saldo_livre: w.saldo_livre - amount,
         positions: { ...w.positions, [simbolo]: pos },
         trades: [...w.trades, trade],
       }};
+      _dtSyncTrade(trade, perfilId);
+      _dtSyncWallet(perfilId, next[perfilId]);
+      return next;
     });
   }, []);
 
@@ -565,9 +625,12 @@ function useMultiWallet() {
         time: Date.now(), score, auto, motivo_saida,
       };
       const { [simbolo]: _r, ...rest } = w.positions;
-      return { ...prev, [perfilId]: {
+      const next = { ...prev, [perfilId]: {
         ...w, saldo_livre: w.saldo_livre + sell_value, positions: rest, trades: [...w.trades, trade],
       }};
+      _dtSyncTrade(trade, perfilId);
+      _dtSyncWallet(perfilId, next[perfilId]);
+      return next;
     });
   }, []);
 
@@ -591,7 +654,9 @@ function useMultiWallet() {
 
   const resetPerfil = useCallback((perfilId: string) => {
     const cfg = PERFIS.find(p => p.id === perfilId);
-    upd(prev => ({ ...prev, [perfilId]: emptyWallet(cfg?.capital_inicial ?? 100000) }));
+    const cap = cfg?.capital_inicial ?? 100000;
+    upd(prev => ({ ...prev, [perfilId]: emptyWallet(cap) }));
+    fetch(`${API}/cripto/wallets/daytrade/${perfilId}?saldo_inicial=${cap}`, { method: "DELETE" }).catch(() => {});
   }, []);
 
   const resetAll = useCallback(() => {
