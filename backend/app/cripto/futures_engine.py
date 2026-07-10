@@ -9,12 +9,18 @@ from .daytrade_engine import calcular_daytrade
 
 MARKET_CAP_RANKS = {
     "BTC": 1, "ETH": 2, "BNB": 3, "XRP": 4, "SOL": 5,
-    "ADA": 6, "DOGE": 7, "AVAX": 8, "LINK": 9, "DOT": 10,
-    "LTC": 11, "BCH": 12, "UNI": 13, "AAVE": 14, "NEAR": 15,
-    "ARB": 30, "OP": 35, "SUI": 45, "MATIC": 20,
+    "DOGE": 6, "TRX": 7, "ADA": 8, "TON": 9, "AVAX": 10,
+    "SHIB": 11, "LINK": 12, "DOT": 13, "NEAR": 14, "LTC": 15,
+    "ATOM": 16, "PEPE": 17, "MATIC": 18, "BCH": 19, "APT": 20,
+    "UNI": 21, "INJ": 22, "AAVE": 23, "ARB": 24, "OP": 25,
+    "SUI": 26, "STX": 27, "IMX": 28, "FTM": 29, "GRT": 30,
+    "LDO": 31, "FIL": 32, "MKR": 33, "SAND": 34, "MANA": 35,
+    "CRV": 36, "BLUR": 37, "WLD": 38, "SEI": 39, "TIA": 40,
+    "WIF": 41, "JUP": 42, "BONK": 43, "FLOKI": 44, "NOT": 45,
+    "PYTH": 46, "APE": 47, "GMX": 48, "DYDX": 49, "GMT": 50,
 }
 
-_HIGH_QUALITY = {"BTC", "ETH", "SOL", "BNB", "LINK", "AAVE"}
+_HIGH_QUALITY = {"BTC", "ETH", "SOL", "BNB", "LINK", "AAVE", "TON", "TRX", "AVAX"}
 
 
 # ── Fluxo (Open Interest, Funding, L/S ratio, CVD, VWAP) ─────────────────────

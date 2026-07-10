@@ -19,12 +19,18 @@ router = APIRouter(tags=["binance — trade"])
 BAPI = "https://api.binance.com"
 FAPI = "https://fapi.binance.com"
 
-PAIRS = [
+PAIRS = {
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
     "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "LTCUSDT",
     "DOTUSDT", "UNIUSDT", "AAVEUSDT", "NEARUSDT", "ARBUSDT",
     "OPUSDT", "SUIUSDT", "MATICUSDT", "BCHUSDT",
-]
+    "ATOMUSDT", "APTUSDT", "FILUSDT", "INJUSDT", "TIAUSDT",
+    "WIFUSDT", "PEPEUSDT", "SHIBUSDT", "TONUSDT", "TRXUSDT",
+    "MKRUSDT", "SANDUSDT", "MANAUSDT", "GRTUSDT", "LDOUSDT",
+    "IMXUSDT", "FTMUSDT", "STXUSDT", "WLDUSDT", "SEIUSDT",
+    "JUPUSDT", "FLOKIUSDT", "BONKUSDT", "PYTHUSDT", "BLURUSDT",
+    "APEUSDT", "CRVUSDT", "GMXUSDT", "DYDXUSDT", "NOTUSDT",
+}
 
 
 # ── Signing ───────────────────────────────────────────────────────────────────
@@ -87,6 +93,8 @@ async def trade_prices():
     async with httpx.AsyncClient(timeout=10.0) as cli:
         r = await cli.get(f"{BAPI}/api/v3/ticker/24hr")
         all_t = r.json()
+    if not isinstance(all_t, list):
+        raise HTTPException(502, f"Binance API error: {all_t}")
     return {
         t["symbol"]: {
             "price":    float(t["lastPrice"]),
@@ -97,7 +105,8 @@ async def trade_prices():
             "bid":      float(t["bidPrice"]),
             "ask":      float(t["askPrice"]),
         }
-        for t in all_t if t["symbol"] in PAIRS
+        for t in all_t
+        if isinstance(t, dict) and t.get("symbol") in PAIRS
     }
 
 

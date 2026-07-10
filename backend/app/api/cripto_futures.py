@@ -19,7 +19,7 @@ router = APIRouter(tags=["cripto — futures"])
 
 _CACHE: dict[str, tuple[float, dict]] = {}
 _TTL_COIN = 3 * 60     # 3 min (futures muda rápido)
-_TTL_SCAN = 8 * 60     # 8 min para o scan completo
+_TTL_SCAN = 10 * 60    # 10 min para o scan completo (50 moedas)
 _TTL_USDRL = 30        # 30s para cotação USD/BRL
 
 _USD_BRL_CACHE: Optional[tuple[float, float]] = None   # (timestamp, rate)
@@ -28,7 +28,7 @@ _BTC_DOM_CACHE: Optional[tuple[float, float, str]] = None  # (timestamp, pct, tr
 BINANCE_SPOT_API    = "https://api.binance.com/api/v3"
 BINANCE_FUTURES_API = "https://fapi.binance.com"
 
-# Moedas suportadas (USDT perp futures — mesmas 19 do daytrade)
+# Moedas suportadas (USDT perp futures — top 50 por liquidez)
 FT_COINS: dict[str, str] = {
     "BTC":   "BTCUSDT",
     "ETH":   "ETHUSDT",
@@ -37,18 +37,49 @@ FT_COINS: dict[str, str] = {
     "XRP":   "XRPUSDT",
     "DOGE":  "DOGEUSDT",
     "ADA":   "ADAUSDT",
+    "TRX":   "TRXUSDT",
     "AVAX":  "AVAXUSDT",
+    "TON":   "TONUSDT",
+    "SHIB":  "SHIBUSDT",
     "LINK":  "LINKUSDT",
-    "LTC":   "LTCUSDT",
     "DOT":   "DOTUSDT",
-    "MATIC": "MATICUSDT",
-    "BCH":   "BCHUSDT",
-    "UNI":   "UNIUSDT",
-    "AAVE":  "AAVEUSDT",
+    "LTC":   "LTCUSDT",
+    "ATOM":  "ATOMUSDT",
     "NEAR":  "NEARUSDT",
+    "MATIC": "MATICUSDT",
+    "PEPE":  "PEPEUSDT",
+    "BCH":   "BCHUSDT",
+    "APT":   "APTUSDT",
+    "UNI":   "UNIUSDT",
+    "INJ":   "INJUSDT",
+    "AAVE":  "AAVEUSDT",
     "ARB":   "ARBUSDT",
     "OP":    "OPUSDT",
     "SUI":   "SUIUSDT",
+    "STX":   "STXUSDT",
+    "IMX":   "IMXUSDT",
+    "FTM":   "FTMUSDT",
+    "GRT":   "GRTUSDT",
+    "LDO":   "LDOUSDT",
+    "FIL":   "FILUSDT",
+    "MKR":   "MKRUSDT",
+    "SAND":  "SANDUSDT",
+    "MANA":  "MANAUSDT",
+    "CRV":   "CRVUSDT",
+    "BLUR":  "BLURUSDT",
+    "WLD":   "WLDUSDT",
+    "SEI":   "SEIUSDT",
+    "TIA":   "TIAUSDT",
+    "WIF":   "WIFUSDT",
+    "JUP":   "JUPUSDT",
+    "BONK":  "BONKUSDT",
+    "FLOKI": "FLOKIUSDT",
+    "NOT":   "NOTUSDT",
+    "PYTH":  "PYTHUSDT",
+    "APE":   "APEUSDT",
+    "GMX":   "GMXUSDT",
+    "DYDX":  "DYDXUSDT",
+    "GMT":   "GMTUSDT",
 }
 
 TF_INTERVALS: dict[str, str] = {
@@ -142,9 +173,22 @@ async def _fetch_futures_klines(
     interval: str,
     limit: int,
 ) -> list[dict]:
+    # 1. Tenta Binance Futures
     try:
         r = await cli.get(
             f"{BINANCE_FUTURES_API}/fapi/v1/klines",
+            params={"symbol": symbol, "interval": interval, "limit": limit},
+        )
+        if r.status_code == 200:
+            parsed = _parse_klines(r.json())
+            if parsed:
+                return parsed
+    except Exception:
+        pass
+    # 2. Fallback: Binance Spot (mesmos dados OHLCV para análise técnica)
+    try:
+        r = await cli.get(
+            f"{BINANCE_SPOT_API}/klines",
             params={"symbol": symbol, "interval": interval, "limit": limit},
         )
         if r.status_code == 200:
@@ -386,7 +430,7 @@ async def _analisar_futures_moeda(
     btc_dom_trend: str,
 ) -> dict:
     """Busca todos os dados em paralelo e executa o futures engine."""
-    async with httpx.AsyncClient(timeout=15.0) as cli:
+    async with httpx.AsyncClient(timeout=20.0) as cli:
         # Klines para 7 timeframes
         tf_tasks = {
             tf: _fetch_futures_klines(cli, bn_sym, interval, TF_LIMITS[tf])
@@ -531,18 +575,29 @@ async def get_futures_scan():
 
     resultados: list[dict] = []
 
+    # Coins com cache → adiciona direto; sem cache → lista para buscar em batch
+    coins_to_fetch: list[tuple[str, str]] = []
     for simbolo, bn_sym in FT_COINS.items():
         cached_coin = _from_cache(f"ft:{simbolo}", _TTL_COIN)
         if cached_coin:
             resultados.append(_resumo(cached_coin))
-            continue
-        try:
-            res = await _analisar_futures_moeda(simbolo, bn_sym, fg, usd_brl, btc_dom, btc_dom_trend)
+        else:
+            coins_to_fetch.append((simbolo, bn_sym))
+
+    # Processa em batches de 8 para não sobrecarregar a Binance API
+    BATCH = 8
+    for i in range(0, len(coins_to_fetch), BATCH):
+        batch = coins_to_fetch[i : i + BATCH]
+        tasks = [
+            _analisar_futures_moeda(s, b, fg, usd_brl, btc_dom, btc_dom_trend)
+            for s, b in batch
+        ]
+        batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for (simbolo, _), res in zip(batch, batch_results):
+            if isinstance(res, Exception) or not isinstance(res, dict):
+                continue
             _set_cache(f"ft:{simbolo}", res)
             resultados.append(_resumo(res))
-            await asyncio.sleep(0.08)
-        except Exception:
-            continue
 
     resultados.sort(key=lambda x: x["score_final"], reverse=True)
 
@@ -603,14 +658,20 @@ async def stream_futures_scan(interval: int = 30):
         btc_dom, btc_dom_trend = dom_result if isinstance(dom_result, tuple) else (None, "neutro")
 
         resultados: list[dict] = []
-        for simbolo, bn_sym in FT_COINS.items():
-            try:
-                res = await _analisar_futures_moeda(simbolo, bn_sym, fg, usd_brl, btc_dom, btc_dom_trend)
+        coins_list = list(FT_COINS.items())
+        BATCH = 8
+        for i in range(0, len(coins_list), BATCH):
+            batch = coins_list[i : i + BATCH]
+            tasks = [
+                _analisar_futures_moeda(s, b, fg, usd_brl, btc_dom, btc_dom_trend)
+                for s, b in batch
+            ]
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for (simbolo, _), res in zip(batch, batch_results):
+                if isinstance(res, Exception) or not isinstance(res, dict):
+                    continue
                 _set_cache(f"ft:{simbolo}", res)
                 resultados.append(_resumo(res))
-                await asyncio.sleep(0.05)
-            except Exception:
-                continue
 
         resultados.sort(key=lambda x: x["score_final"], reverse=True)
         top_long  = sorted([r for r in resultados if r.get("direction") == "LONG"  and r.get("operar")], key=lambda x: x["score_final"], reverse=True)[:10]
