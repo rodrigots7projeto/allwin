@@ -14,24 +14,32 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from .api.ai_chat import router as router_ai
-from .api.ai_compare import router as router_compare
-from .api.ai_documentos import router as router_docs
-from .api.ai_radar import router as router_radar
-from .api.cripto import router as router_cripto
-from .api.cripto_comparativo import router as router_cripto_comp
-from .api.cripto_backtest import router as router_cripto_backtest
-from .api.cripto_daytrade import router as router_cripto_daytrade
+# Módulos cripto — sempre disponíveis
 from .api.binance_trade import router as router_binance_trade
+from .api.cripto import router as router_cripto
+from .api.cripto_backtest import router as router_cripto_backtest
+from .api.cripto_comparativo import router as router_cripto_comp
+from .api.cripto_daytrade import router as router_cripto_daytrade
 from .api.cripto_futures import router as router_cripto_futures
 from .api.cripto_motor import router as router_cripto_motor
 from .api.cripto_sinais import router as router_cripto_sinais
-from .api.ranking import router as router_ranking
-from .api.routes import router as router_v1
-from .api.rs_analisa import router as router_rs
-from .api.simulador import router as router_simulador
-from .api.v2.router import router as router_v2
 from .config import settings
+
+# Módulos B3/CVM — opcionais (dependem de dados locais e PostgreSQL)
+router_ai = router_compare = router_docs = router_radar = None
+router_ranking = router_v1 = router_rs = router_simulador = router_v2 = None
+try:
+    from .api.ai_chat import router as router_ai
+    from .api.ai_compare import router as router_compare
+    from .api.ai_documentos import router as router_docs
+    from .api.ai_radar import router as router_radar
+    from .api.ranking import router as router_ranking
+    from .api.routes import router as router_v1
+    from .api.rs_analisa import router as router_rs
+    from .api.simulador import router as router_simulador
+    from .api.v2.router import router as router_v2
+except Exception as _e:
+    print(f"[AVISO] Módulos B3 não carregados ({_e}) — modo cripto-only")
 
 
 @asynccontextmanager
@@ -109,42 +117,26 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # ── Routers ────────────────────────────────────────────────────────────────────
 
-# v1: brapi.dev + CVM file-based (existente, sem banco)
-app.include_router(router_v1, prefix="/api/v1", tags=["v1 — brapi + CVM"])
+# B3/CVM — só monta se o módulo carregou
+if router_v1:        app.include_router(router_v1,        prefix="/api/v1", tags=["v1 — brapi + CVM"])
+if router_rs:        app.include_router(router_rs,        prefix="/api/v1")
+if router_simulador: app.include_router(router_simulador, prefix="/api/v1")
+if router_ai:        app.include_router(router_ai,        prefix="/api/v1")
+if router_compare:   app.include_router(router_compare,   prefix="/api/v1")
+if router_radar:     app.include_router(router_radar,     prefix="/api/v1")
+if router_docs:      app.include_router(router_docs,      prefix="/api/v1")
+if router_ranking:   app.include_router(router_ranking,   prefix="/api/v1")
+if router_v2:        app.include_router(router_v2,        prefix="/api")
 
-# RS Analisa: inteligência financeira agregada
-app.include_router(router_rs, prefix="/api/v1")
-
-# Simulador de Investimentos
-app.include_router(router_simulador, prefix="/api/v1")
-
-# AI — Analista Particular (Feature 1)
-app.include_router(router_ai, prefix="/api/v1")
-
-# AI — Comparador Automático (Feature 2)
-app.include_router(router_compare, prefix="/api/v1")
-
-# AI — Radar de Anomalias (Feature 3)
-app.include_router(router_radar, prefix="/api/v1")
-
-# AI — Documentos CVM (Feature 4)
-app.include_router(router_docs, prefix="/api/v1")
-
-# Ranking Inteligente
-app.include_router(router_ranking, prefix="/api/v1")
-
-# Criptomoedas — rotas específicas ANTES do genérico /{simbolo}
+# Criptomoedas — sempre disponíveis
 app.include_router(router_binance_trade,   prefix="/api/v1")
 app.include_router(router_cripto_backtest, prefix="/api/v1")
 app.include_router(router_cripto_daytrade, prefix="/api/v1")
 app.include_router(router_cripto_futures,  prefix="/api/v1")
 app.include_router(router_cripto_sinais,   prefix="/api/v1")
 app.include_router(router_cripto_motor,    prefix="/api/v1")
-app.include_router(router_cripto_comp,  prefix="/api/v1")
-app.include_router(router_cripto,       prefix="/api/v1")
-
-# v2: Data Warehouse PostgreSQL (novo)
-app.include_router(router_v2, prefix="/api")
+app.include_router(router_cripto_comp,     prefix="/api/v1")
+app.include_router(router_cripto,          prefix="/api/v1")
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
