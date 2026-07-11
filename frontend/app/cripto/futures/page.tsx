@@ -55,6 +55,15 @@ interface FuturesWallet {
   trades: FuturesTrade[]; criado: string;
 }
 
+interface FuturesSubScoreFilter {
+  tec_min?: number;   // score_tecnico >= tec_min (bullish chart)
+  tec_max?: number;   // score_tecnico <= tec_max (bearish chart — para SHORT)
+  flx_min?: number;   // score_fluxo >= flx_min (bullish flow)
+  flx_max?: number;   // score_fluxo <= flx_max (bearish flow — para SHORT)
+  ctx_min?: number;   // score_contexto >= ctx_min
+  fnd_min?: number;   // score_fundamental >= fnd_min
+}
+
 interface FuturesPerfilConfig {
   id: string; nome: string;
   nivel: "Normal" | "PRO" | "PRO MAX" | "Alavancado";
@@ -66,6 +75,16 @@ interface FuturesPerfilConfig {
   capital_inicial?: number; stake_base?: number; stake_dupla_score?: number;
   direction_allowed: "LONG" | "SHORT" | "BOTH";
   descricao: string;
+  // ── Filtros por indicadores de cada cripto ────────────────────────────────
+  grade_required?: string[];
+  require_ist_min?: number;
+  require_funding_neg?: boolean;
+  require_oi_increase?: boolean;
+  require_cvd_bullish?: boolean;
+  require_cvd_bearish?: boolean;
+  // ── Filtros por sub-scores (v2 — porta de entrada principal) ─────────────
+  long_filter?: FuturesSubScoreFilter;   // condições para entrar LONG
+  short_filter?: FuturesSubScoreFilter;  // condições para entrar SHORT
 }
 
 interface FuturesBancoEntry {
@@ -106,100 +125,208 @@ interface BotWallet {
 // Objetivo futuros: capturar 1-5% no ativo. Com alavancagem, isso vira 10-50%+ de retorno na margem.
 // SL sempre < TP para manter R:R ≥ 1:2. Entradas frequentes > ganhos grandes por trade.
 const PERFIS_FUTURES: FuturesPerfilConfig[] = [
-  // ── Conservador ─────────────────────────────── SL/TP no ativo (não alavancado)
-  // aguardar_ok: true em TODOS os perfis — futuros entra em OPERAR e AGUARDAR (mais entradas)
+  // ── Conservador ── TEC/FLX/CTX/FND altos exigidos para confirmar sinal ───────
   { id: "f_cons_normal", nome: "Conservador", nivel: "Normal", emoji: "🛡️", cor: "#3b82f6",
     score_compra: 68, score_venda: 45, bull_pct_min: 53, sl_pct: 0.008, tp_pct: 0.02,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 1000, direction_allowed: "BOTH",
-    descricao: "Alvo 2% no ativo (SL 0.8%). Com 10x = +20% retorno. Score ≥ 68." },
+    grade_required: ["A+","A"], require_ist_min: 55,
+    long_filter:  { tec_min: 65, flx_min: 60, ctx_min: 60, fnd_min: 48 },
+    short_filter: { tec_max: 38, flx_max: 42, ctx_min: 55, fnd_min: 45 },
+    descricao: "Alvo 2% (SL 0.8%). LONG: TEC≥65/FLX≥60/CTX≥60/FND≥48. SHORT: TEC≤38/FLX≤42." },
   { id: "f_cons_pro", nome: "Conservador", nivel: "PRO", emoji: "🛡️", cor: "#2563eb",
     score_compra: 65, score_venda: 42, bull_pct_min: 51, sl_pct: 0.009, tp_pct: 0.025,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 1000, direction_allowed: "BOTH",
-    descricao: "Alvo 2.5% no ativo (SL 0.9%). Com 10x = +25% retorno. Score ≥ 65." },
+    grade_required: ["A+","A"], require_ist_min: 50,
+    long_filter:  { tec_min: 62, flx_min: 57, ctx_min: 57, fnd_min: 45 },
+    short_filter: { tec_max: 40, flx_max: 45, ctx_min: 52, fnd_min: 42 },
+    descricao: "Alvo 2.5% (SL 0.9%). LONG: TEC≥62/FLX≥57/CTX≥57/FND≥45." },
   { id: "f_cons_promax", nome: "Conservador", nivel: "PRO MAX", emoji: "🛡️", cor: "#1d4ed8",
     score_compra: 62, score_venda: 40, bull_pct_min: 49, sl_pct: 0.010, tp_pct: 0.03,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 1000, direction_allowed: "BOTH",
-    descricao: "Alvo 3% no ativo (SL 1%). Com 10x = +30% retorno. Score ≥ 62." },
-  // ── Moderado ─────────────────────────────────
+    grade_required: ["A+","A","B"], require_ist_min: 45,
+    long_filter:  { tec_min: 58, flx_min: 53, ctx_min: 53, fnd_min: 40 },
+    short_filter: { tec_max: 44, flx_max: 50, ctx_min: 48, fnd_min: 38 },
+    descricao: "Alvo 3% (SL 1%). LONG: TEC≥58/FLX≥53/CTX≥53/FND≥40." },
+  // ── Moderado ── Filtros progressivamente mais permissivos ────────────────────
   { id: "f_mod_normal", nome: "Moderado", nivel: "Normal", emoji: "⚖️", cor: "#8b5cf6",
     score_compra: 60, score_venda: 38, bull_pct_min: 47, sl_pct: 0.010, tp_pct: 0.025,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 1000, direction_allowed: "BOTH",
-    descricao: "Alvo 2.5% no ativo (SL 1%). Com 10x = +25% retorno. Score ≥ 60." },
+    grade_required: ["A+","A","B"],
+    long_filter:  { tec_min: 55, flx_min: 50, ctx_min: 50, fnd_min: 35 },
+    short_filter: { tec_max: 48, flx_max: 54, ctx_min: 44, fnd_min: 32 },
+    descricao: "Alvo 2.5% (SL 1%). LONG: TEC≥55/FLX≥50/CTX≥50/FND≥35." },
   { id: "f_mod_pro", nome: "Moderado", nivel: "PRO", emoji: "⚖️", cor: "#7c3aed",
     score_compra: 55, score_venda: 37, bull_pct_min: 45, sl_pct: 0.012, tp_pct: 0.03,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 1000, direction_allowed: "BOTH",
-    descricao: "Alvo 3% no ativo (SL 1.2%). Com 10x = +30% retorno. Score ≥ 55." },
+    grade_required: ["A+","A","B","C"],
+    long_filter:  { tec_min: 50, flx_min: 46, ctx_min: 46, fnd_min: 30 },
+    short_filter: { tec_max: 52, flx_max: 58, ctx_min: 40, fnd_min: 27 },
+    descricao: "Alvo 3% (SL 1.2%). LONG: TEC≥50/FLX≥46/CTX≥46/FND≥30." },
   { id: "f_mod_promax", nome: "Moderado", nivel: "PRO MAX", emoji: "⚖️", cor: "#6d28d9",
     score_compra: 52, score_venda: 35, bull_pct_min: 43, sl_pct: 0.013, tp_pct: 0.035,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 1000, direction_allowed: "BOTH",
-    descricao: "Alvo 3.5% no ativo (SL 1.3%). Com 10x = +35% retorno. Score ≥ 52." },
-  // ── Agressivo ─────────────────────────────────
+    long_filter:  { tec_min: 46, flx_min: 42, ctx_min: 42, fnd_min: 25 },
+    short_filter: { tec_max: 57, flx_max: 63, ctx_min: 36, fnd_min: 22 },
+    descricao: "Alvo 3.5% (SL 1.3%). LONG: TEC≥46/FLX≥42/CTX≥42/FND≥25." },
+  // ── Agressivo ── Thresholds permissivos, máxima frequência de entradas ────────
   { id: "f_agr_normal", nome: "Agressivo", nivel: "Normal", emoji: "⚡", cor: "#f59e0b",
     score_compra: 48, score_venda: 33, bull_pct_min: 41, sl_pct: 0.013, tp_pct: 0.035,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 1000, direction_allowed: "BOTH",
-    descricao: "Alvo 3.5% no ativo (SL 1.3%). Com 5x = +17.5% retorno. Score ≥ 48." },
+    long_filter:  { tec_min: 42, flx_min: 38, ctx_min: 38, fnd_min: 20 },
+    short_filter: { tec_max: 62, flx_max: 68, ctx_min: 30, fnd_min: 18 },
+    descricao: "Alvo 3.5% (SL 1.3%). LONG: TEC≥42/FLX≥38/CTX≥38/FND≥20." },
   { id: "f_agr_pro", nome: "Agressivo", nivel: "PRO", emoji: "⚡", cor: "#d97706",
     score_compra: 45, score_venda: 32, bull_pct_min: 39, sl_pct: 0.015, tp_pct: 0.04,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 1000, direction_allowed: "BOTH",
-    descricao: "Alvo 4% no ativo (SL 1.5%). Com 5x = +20% retorno. Score ≥ 45." },
+    long_filter:  { tec_min: 38, flx_min: 35, ctx_min: 35, fnd_min: 17 },
+    short_filter: { tec_max: 67, flx_max: 73, ctx_min: 27, fnd_min: 15 },
+    descricao: "Alvo 4% (SL 1.5%). LONG: TEC≥38/FLX≥35/CTX≥35/FND≥17." },
   { id: "f_agr_promax", nome: "Agressivo", nivel: "PRO MAX", emoji: "⚡", cor: "#b45309",
     score_compra: 42, score_venda: 30, bull_pct_min: 37, sl_pct: 0.017, tp_pct: 0.05,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 1000, direction_allowed: "BOTH",
-    descricao: "Alvo 5% no ativo (SL 1.7%). Com 5x = +25% retorno. Score ≥ 42." },
-  // ── Alavancado (stake maior, alvos menores para girar mais) ──────────────────
+    long_filter:  { tec_min: 34, flx_min: 31, ctx_min: 31, fnd_min: 14 },
+    short_filter: { tec_max: 73, flx_max: 79, ctx_min: 23, fnd_min: 12 },
+    descricao: "Alvo 5% (SL 1.7%). LONG: TEC≥34/FLX≥31/CTX≥31/FND≥14. Ultra-agressivo." },
+  // ── Alavancado ── Exige confirmação robusta: todos sub-scores alinhados ────────
   { id: "f_cons_alav", nome: "Conservador", nivel: "Alavancado", emoji: "🔱", cor: "#06b6d4",
     score_compra: 72, score_venda: 50, bull_pct_min: 55, sl_pct: 0.006, tp_pct: 0.015,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 5000, stake_dupla_score: 87,
     direction_allowed: "BOTH",
-    descricao: "Alvo 1.5% no ativo (SL 0.6%). Com 20x = +30% retorno. R$ 5k stake. Score ≥ 72." },
+    grade_required: ["A+"], require_ist_min: 65, require_funding_neg: true, require_oi_increase: true,
+    long_filter:  { tec_min: 70, flx_min: 65, ctx_min: 65, fnd_min: 53 },
+    short_filter: { tec_max: 32, flx_max: 36, ctx_min: 60, fnd_min: 50 },
+    descricao: "Alav. LONG: TEC≥70/FLX≥65/CTX≥65/FND≥53 + Grade A+ + IST≥65 + Funding neg." },
   { id: "f_mod_alav", nome: "Moderado", nivel: "Alavancado", emoji: "🔱", cor: "#0ea5e9",
     score_compra: 68, score_venda: 47, bull_pct_min: 52, sl_pct: 0.007, tp_pct: 0.018,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 5000, stake_dupla_score: 83,
     direction_allowed: "BOTH",
-    descricao: "Alvo 1.8% no ativo (SL 0.7%). Com 20x = +36% retorno. Score ≥ 68." },
+    grade_required: ["A+","A"], require_ist_min: 58, require_oi_increase: true,
+    long_filter:  { tec_min: 66, flx_min: 60, ctx_min: 60, fnd_min: 48 },
+    short_filter: { tec_max: 36, flx_max: 42, ctx_min: 55, fnd_min: 45 },
+    descricao: "Alav. LONG: TEC≥66/FLX≥60/CTX≥60/FND≥48 + Grade A/A+ + IST≥58." },
   { id: "f_agr_alav", nome: "Agressivo", nivel: "Alavancado", emoji: "🔱", cor: "#f97316",
     score_compra: 63, score_venda: 43, bull_pct_min: 48, sl_pct: 0.008, tp_pct: 0.02,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 5000, stake_dupla_score: 80,
     direction_allowed: "BOTH",
-    descricao: "Alvo 2% no ativo (SL 0.8%). Com 20x = +40% retorno. Score ≥ 63." },
-  // ── Subida (captura tendência inicial — TP maior pois entra antes do sinal) ──
+    grade_required: ["A+","A","B"], require_ist_min: 50,
+    long_filter:  { tec_min: 60, flx_min: 55, ctx_min: 55, fnd_min: 43 },
+    short_filter: { tec_max: 42, flx_max: 48, ctx_min: 48, fnd_min: 40 },
+    descricao: "Alav. LONG: TEC≥60/FLX≥55/CTX≥55/FND≥43 + Grade≥B + IST≥50." },
+  // ── Subida ── Entra antes do sinal pleno: FLX bullish mas TEC ainda moderado ──
   { id: "f_sub_cons", nome: "Subida", nivel: "Normal" as "Normal", emoji: "📈", cor: "#22c55e",
     score_compra: 48, score_max_compra: 79, score_venda: 33, bull_pct_min: 51, sl_pct: 0.010, tp_pct: 0.035,
     aguardar_ok: false, apenas_aguardar: true, capital_inicial: 100000, stake_base: 500,
     direction_allowed: "LONG",
-    descricao: "Entra antes do sinal pleno. Alvo 3.5% (SL 1%). Com 5x = +17.5%. Score 48-59." },
+    require_cvd_bullish: true,
+    long_filter: { tec_min: 38, flx_min: 52, ctx_min: 40, fnd_min: 25 },
+    descricao: "Subida: FLX≥52 já bullish, TEC≥38 começando a girar. CVD bullish obrigatório." },
   { id: "f_sub_mod", nome: "Subida", nivel: "PRO" as "PRO", emoji: "📈", cor: "#16a34a",
     score_compra: 40, score_max_compra: 79, score_venda: 30, bull_pct_min: 48, sl_pct: 0.012, tp_pct: 0.04,
     aguardar_ok: false, apenas_aguardar: true, capital_inicial: 100000, stake_base: 500,
     direction_allowed: "LONG",
-    descricao: "Entrada antecipada. Alvo 4% (SL 1.2%). Com 5x = +20%. Score 40-59." },
+    require_cvd_bullish: true,
+    long_filter: { tec_min: 30, flx_min: 44, ctx_min: 33, fnd_min: 20 },
+    descricao: "Subida PRO: FLX≥44/TEC≥30. Entrada antecipada. CVD bullish." },
   { id: "f_sub_agr", nome: "Subida", nivel: "PRO MAX" as "PRO MAX", emoji: "📈", cor: "#15803d",
     score_compra: 35, score_max_compra: 79, score_venda: 28, bull_pct_min: 45, sl_pct: 0.015, tp_pct: 0.05,
     aguardar_ok: false, apenas_aguardar: true, capital_inicial: 100000, stake_base: 500,
     direction_allowed: "LONG",
-    descricao: "Entrada muito antecipada. Alvo 5% (SL 1.5%). Com 5x = +25%. Score 35-59." },
+    long_filter: { tec_min: 22, flx_min: 36, ctx_min: 26, fnd_min: 15 },
+    descricao: "Subida ultra-agressiva. FLX≥36/TEC≥22. Entrada muito antecipada." },
   { id: "f_sub_alav", nome: "Subida", nivel: "Alavancado" as "Alavancado", emoji: "📈🔱", cor: "#84cc16",
     score_compra: 44, score_max_compra: 79, score_venda: 30, bull_pct_min: 49, sl_pct: 0.010, tp_pct: 0.03,
     aguardar_ok: false, apenas_aguardar: true, capital_inicial: 100000, stake_base: 500, stake_dupla_score: 72,
     direction_allowed: "LONG",
-    descricao: "Subida alavancada. Alvo 3% (SL 1%). Com 10x = +30%. Score 44-59." },
-  // ── Scalp (muitas entradas, alvos pequenos, surfa qualquer movimento direcional) ──
+    require_cvd_bullish: true, require_oi_increase: true,
+    long_filter: { tec_min: 34, flx_min: 48, ctx_min: 36, fnd_min: 22 },
+    descricao: "Subida alavancada. FLX≥48/TEC≥34 + CVD bullish + OI crescendo." },
+  // ── Short ── Exige condições bearish: TEC e FLX baixos ───────────────────────
+  { id: "f_short_cons", nome: "Short", nivel: "Normal" as "Normal", emoji: "📉", cor: "#ef4444",
+    score_compra: 68, score_venda: 45, bull_pct_min: 40, sl_pct: 0.008, tp_pct: 0.020,
+    aguardar_ok: true, capital_inicial: 100000, stake_base: 500,
+    direction_allowed: "SHORT",
+    grade_required: ["A+","A"],
+    short_filter: { tec_max: 36, flx_max: 40, ctx_min: 55, fnd_min: 42 },
+    descricao: "Short Conservador: TEC≤36/FLX≤40 (bearish) + CTX≥55/FND≥42 + Grade A/A+." },
+  { id: "f_short_mod", nome: "Short", nivel: "PRO" as "PRO", emoji: "📉", cor: "#dc2626",
+    score_compra: 60, score_venda: 40, bull_pct_min: 35, sl_pct: 0.010, tp_pct: 0.025,
+    aguardar_ok: true, capital_inicial: 100000, stake_base: 500,
+    direction_allowed: "SHORT",
+    short_filter: { tec_max: 44, flx_max: 50, ctx_min: 46, fnd_min: 36 },
+    descricao: "Short Moderado: TEC≤44/FLX≤50 (bearish) + CTX≥46/FND≥36." },
+  // ── Scalp ── Alta frequência, thresholds permissivos, ambas direções ──────────
   { id: "f_scalp_cons", nome: "Scalp", nivel: "Conservador" as "Normal", emoji: "⚡🛡️", cor: "#22d3ee",
     score_compra: 45, score_venda: 30, bull_pct_min: 0, sl_pct: 0.003, tp_pct: 0.007,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 2000,
     direction_allowed: "BOTH",
-    descricao: "Scalp: alvo 0.7% no ativo (SL 0.3%). Com 20x = +14% por trade. Score ≥ 45." },
+    long_filter:  { tec_min: 38, flx_min: 35, ctx_min: 30, fnd_min: 18 },
+    short_filter: { tec_max: 62, flx_max: 67, ctx_min: 27, fnd_min: 15 },
+    descricao: "Scalp 0.7% (SL 0.3%). LONG: TEC≥38/FLX≥35. SHORT: TEC≤62/FLX≤67." },
   { id: "f_scalp_mod", nome: "Scalp", nivel: "Moderado" as "PRO", emoji: "⚡⚖️", cor: "#a78bfa",
     score_compra: 38, score_venda: 24, bull_pct_min: 0, sl_pct: 0.004, tp_pct: 0.010,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 2000,
     direction_allowed: "BOTH",
-    descricao: "Scalp: alvo 1% no ativo (SL 0.4%). Com 20x = +20% por trade. Score ≥ 38." },
+    long_filter:  { tec_min: 30, flx_min: 27, ctx_min: 22, fnd_min: 12 },
+    short_filter: { tec_max: 70, flx_max: 75, ctx_min: 20, fnd_min: 10 },
+    descricao: "Scalp 1% (SL 0.4%). LONG: TEC≥30/FLX≥27. SHORT: TEC≤70/FLX≤75." },
   { id: "f_scalp_arj", nome: "Scalp", nivel: "Arrojado" as "PRO MAX", emoji: "⚡🔥", cor: "#fb923c",
     score_compra: 30, score_venda: 18, bull_pct_min: 0, sl_pct: 0.005, tp_pct: 0.013,
     aguardar_ok: true, capital_inicial: 100000, stake_base: 2000,
     direction_allowed: "BOTH",
-    descricao: "Scalp: alvo 1.3% no ativo (SL 0.5%). Com 20x = +26% por trade. Score ≥ 30. Máximas entradas." },
+    long_filter:  { tec_min: 22, flx_min: 19, ctx_min: 15, fnd_min: 7 },
+    short_filter: { tec_max: 78, flx_max: 83, ctx_min: 13, fnd_min: 5 },
+    descricao: "Scalp 1.3% (SL 0.5%). LONG: TEC≥22/FLX≥19. Máximas entradas." },
 ];
+
+// ── Lógica de entrada por sub-scores individuais (v2) ────────────────────────
+// Porta de entrada: cada perfil define thresholds mínimos para TEC/FLX/CTX/FND
+// separadamente para LONG e SHORT. Isso evita que um sub-score alto compense outro
+// fraco (problema do score_final composto).
+
+function podeEntrarFutures(cfg: FuturesPerfilConfig, it: FuturesItem): "LONG" | "SHORT" | null {
+  // Teto para perfis Subida (evita entrar quando sinal já está pleno)
+  if (cfg.score_max_compra && it.score_final > cfg.score_max_compra) return null;
+
+  // Determina direction do ativo
+  let dir: "LONG" | "SHORT";
+  if      (it.direction === "LONG")  dir = "LONG";
+  else if (it.direction === "SHORT") dir = "SHORT";
+  else {
+    const bp = it.bull_pct ?? 50;
+    if      (bp > 55) dir = "LONG";
+    else if (bp < 45) dir = "SHORT";
+    else return null;
+  }
+
+  // Direção permitida pelo perfil
+  if (cfg.direction_allowed !== "BOTH" && cfg.direction_allowed !== dir) return null;
+
+  // Bull_pct mínimo
+  const bp = it.bull_pct ?? 50;
+  if (dir === "LONG"  && bp < cfg.bull_pct_min) return null;
+  if (dir === "SHORT" && bp > (100 - cfg.bull_pct_min)) return null;
+
+  // ── Filtros por sub-scores (porta principal de entrada) ───────────────────
+  const sf = dir === "LONG" ? cfg.long_filter : cfg.short_filter;
+  if (sf) {
+    if (sf.tec_min != null && it.score_tecnico    < sf.tec_min) return null;
+    if (sf.tec_max != null && it.score_tecnico    > sf.tec_max) return null;
+    if (sf.flx_min != null && it.score_fluxo      < sf.flx_min) return null;
+    if (sf.flx_max != null && it.score_fluxo      > sf.flx_max) return null;
+    if (sf.ctx_min != null && it.score_contexto   < sf.ctx_min) return null;
+    if (sf.fnd_min != null && it.score_fundamental < sf.fnd_min) return null;
+  }
+
+  // ── Filtros complementares por indicadores do ativo ───────────────────────
+  if (cfg.grade_required && !cfg.grade_required.includes(it.grade)) return null;
+  if (cfg.require_ist_min && it.ist < cfg.require_ist_min) return null;
+  if (cfg.require_funding_neg && (it.funding_rate ?? 0) >= 0) return null;
+  if (cfg.require_oi_increase && (it.oi_change_pct ?? 0) <= 0) return null;
+  if (cfg.require_cvd_bullish && !it.cvd_bullish) return null;
+  if (cfg.require_cvd_bearish && it.cvd_bullish !== false) return null;
+
+  return dir;
+}
 
 // ── Bot Profiles (20 bots) ────────────────────────────────────────────────────
 
@@ -880,10 +1007,7 @@ function useFuturesBanco() {
 function contarSinaisAtivos(cfg: FuturesPerfilConfig, items: FuturesItem[]): number {
   let n = 0;
   for (const it of items) {
-    // scoreOk já filtra por threshold do perfil — grade não bloqueia entrada (scalp opera em qualquer grade)
-    const scoreOk = it.score_final >= cfg.score_compra && it.score_final <= (cfg.score_max_compra ?? 100);
-    const dirOk   = it.direction !== "NEUTRO" && (cfg.direction_allowed === "BOTH" || cfg.direction_allowed === it.direction);
-    if (scoreOk && dirOk) n++;
+    if (podeEntrarFutures(cfg, it)) n++;
   }
   return n;
 }
@@ -1832,10 +1956,7 @@ function gerarSinaisIA(scan: FuturesScanData, wallets: Record<string, FuturesWal
     const matched: string[] = [];
     const matchedCfgs: FuturesPerfilConfig[] = [];
     for (const cfg of PERFIS_FUTURES) {
-      // Futuros: LONG → entra LONG, SHORT → entra SHORT. Só score + direção.
-      const scoreOk = it.score_final >= cfg.score_compra && it.score_final <= (cfg.score_max_compra ?? 100);
-      const dirOk   = cfg.direction_allowed === "BOTH" || cfg.direction_allowed === it.direction;
-      if (scoreOk && dirOk) { matched.push(`${cfg.nome} ${cfg.nivel}`); matchedCfgs.push(cfg); }
+      if (podeEntrarFutures(cfg, it)) { matched.push(`${cfg.nome} ${cfg.nivel}`); matchedCfgs.push(cfg); }
     }
     if (matched.length === 0) continue;
     // Average SL/TP from matching profiles
@@ -2324,7 +2445,7 @@ function FuturesAllWalletsView({ wallets, scan, autoTrade, setAutoTrade, onFecha
                       {cfg.nome} <span style={{ color: cfg.cor }}>{cfg.nivel}</span>
                     </div>
                     <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                      {cfg.direction_allowed} · sc≥{cfg.score_compra} · SL{(cfg.sl_pct*100).toFixed(0)}%/TP{(cfg.tp_pct*100).toFixed(0)}%
+                      {cfg.direction_allowed} · {cfg.long_filter ? `TEC≥${cfg.long_filter.tec_min}/FLX≥${cfg.long_filter.flx_min}` : cfg.short_filter ? `TEC≤${cfg.short_filter.tec_max}/FLX≤${cfg.short_filter.flx_max}` : `sc≥${cfg.score_compra}`} · SL{(cfg.sl_pct*100).toFixed(0)}%/TP{(cfg.tp_pct*100).toFixed(0)}%
                     </div>
                   </div>
                 </div>
@@ -2913,7 +3034,7 @@ function FuturesScalpView({
                   <span className="text-[11px] font-bold" style={{ color: cor }}>{cfg.nome} {cfg.nivel}</span>
                 </div>
                 <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>
-                  Score ≥{cfg.score_compra} · SL {(cfg.sl_pct * 100).toFixed(1)}% · TP {(cfg.tp_pct * 100).toFixed(1)}%
+                  {cfg.long_filter ? `LONG: TEC≥${cfg.long_filter.tec_min}/FLX≥${cfg.long_filter.flx_min}/CTX≥${cfg.long_filter.ctx_min}/FND≥${cfg.long_filter.fnd_min}` : cfg.short_filter ? `SHORT: TEC≤${cfg.short_filter.tec_max}/FLX≤${cfg.short_filter.flx_max}` : `sc≥${cfg.score_compra}`} · SL {(cfg.sl_pct * 100).toFixed(1)}% · TP {(cfg.tp_pct * 100).toFixed(1)}%
                 </div>
                 <div className="flex items-center justify-between mt-1">
                   <span className="text-[10px]" style={{ color: "var(--text-secondary)" }}>
@@ -3089,20 +3210,10 @@ export default function FuturesPage() {
           }
         }
 
-        // Novas entradas
+        // Novas entradas — usa podeEntrarFutures() que verifica score + indicadores do ativo
         for (const it of itens) {
-          let dir: "LONG" | "SHORT";
-          if      (it.direction === "LONG")  dir = "LONG";
-          else if (it.direction === "SHORT") dir = "SHORT";
-          else {
-            const bp = it.bull_pct ?? 50;
-            if      (bp > 55) dir = "LONG";
-            else if (bp < 45) dir = "SHORT";
-            else continue;
-          }
-          const scoreOk = it.score_final >= cfg.score_compra && it.score_final <= (cfg.score_max_compra ?? 100);
-          const dirOk   = cfg.direction_allowed === "BOTH" || cfg.direction_allowed === dir;
-          if (!scoreOk || !dirOk) continue;
+          const dir = podeEntrarFutures(cfg, it);
+          if (!dir) continue;
           if (snap[cfg.id]?.positions[it.simbolo]) { bloqueadas++; continue; }
           tentativas++;
           abrirRef.current(cfg.id, it.simbolo, it.preco * usd_brl, usd_brl, it.score_final, dir, true, it.grade ?? "B");
