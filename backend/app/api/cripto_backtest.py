@@ -419,10 +419,14 @@ async def _run_optimize_bg(task_id: str, req: OptimizeLoopRequest, inicio: datet
             and m.get("retorno_total", 0) >= req.target_return
         )
 
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
     try:
         # ── Fase 0: Baseline ─────────────────────────────────────────────────
         task["progresso"] = {"fase": "Testando perfis padrão…", "geracao_atual": 0, "total_geracoes": req.max_geracoes}
         baseline: list[dict] = []
+        _baseline_erros: list[str] = []
 
         for p in PERFIS[:6]:
             try:
@@ -433,12 +437,21 @@ async def _run_optimize_bg(task_id: str, req: OptimizeLoopRequest, inicio: datet
                     fear_greed=req.fear_greed,
                 )
                 if "erro" not in r:
-                    baseline.append({"perfil": p, "result": r, "dss": _calc_dss(r.get("metricas", {}))})
-            except Exception:
-                pass
+                    dss = _calc_dss(r.get("metricas", {}))
+                    _log.info(f"[backtest] {p['nome']} DSS={dss:.1f} trades={r.get('metricas',{}).get('total_trades',0)}")
+                    baseline.append({"perfil": p, "result": r, "dss": dss})
+                else:
+                    _log.warning(f"[backtest] {p['nome']} erro={r['erro']}")
+                    _baseline_erros.append(f"{p['nome']}: {r['erro']}")
+            except Exception as exc:
+                _log.error(f"[backtest] {p['nome']} exception={exc}")
+                _baseline_erros.append(f"{p['nome']}: {exc}")
 
         if not baseline:
-            task["status"] = "error"; task["erro"] = "Nenhum perfil padrão rodou com sucesso"; return
+            detalhe = "; ".join(_baseline_erros[:2]) if _baseline_erros else "sem detalhe"
+            task["status"] = "error"
+            task["erro"] = f"Nenhum perfil padrão rodou com sucesso. Detalhe: {detalhe}"
+            return
 
         baseline.sort(key=lambda x: x["dss"], reverse=True)
         best = baseline[0]
