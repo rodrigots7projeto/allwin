@@ -13,6 +13,7 @@ import {
   Bolt,
   FlaskConical,
   Rocket,
+  BrainCircuit,
 } from "lucide-react";
 
 const STATIC_TABS = [
@@ -22,6 +23,7 @@ const STATIC_TABS = [
   { href: "/cripto/sinais",          label: "Sinais IA",  Icon: Zap },
   { href: "/cripto/daytrade",        label: "Day Trade",  Icon: Crosshair },
   { href: "/cripto/futures",         label: "Futures IA", Icon: TrendingDown },
+  { href: "/cripto/ia-analisa",      label: "IA Analisa", Icon: BrainCircuit },
   { href: "/cripto/trade-futuros",   label: "Trade Fut.", Icon: Rocket },
   { href: "/cripto/rsscore",         label: "RS Score",   Icon: Gauge },
   { href: "/cripto/backtest",        label: "Backtest",   Icon: FlaskConical },

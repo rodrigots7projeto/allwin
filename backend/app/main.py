@@ -23,6 +23,7 @@ from .api.cripto_daytrade import router as router_cripto_daytrade
 from .api.cripto_futures import router as router_cripto_futures
 from .api.cripto_motor import router as router_cripto_motor
 from .api.cripto_sinais import router as router_cripto_sinais
+from .api.cripto_ia_analisa import router as router_cripto_ia_analisa
 from .api.cripto_wallet import router as router_cripto_wallet
 from .config import settings
 
@@ -154,7 +155,8 @@ app.include_router(router_cripto_futures,  prefix="/api/v1")
 app.include_router(router_cripto_sinais,   prefix="/api/v1")
 app.include_router(router_cripto_motor,    prefix="/api/v1")
 app.include_router(router_cripto_comp,     prefix="/api/v1")
-app.include_router(router_cripto_wallet,   prefix="/api/v1")
+app.include_router(router_cripto_ia_analisa, prefix="/api/v1")
+app.include_router(router_cripto_wallet,     prefix="/api/v1")
 app.include_router(router_cripto,          prefix="/api/v1")
 
 

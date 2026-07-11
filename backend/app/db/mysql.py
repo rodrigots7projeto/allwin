@@ -144,6 +144,22 @@ CREATE TABLE IF NOT EXISTS cripto_alertas (
     INDEX idx_simbolo (simbolo),
     INDEX idx_ativo   (ativo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ia_analises (
+    perfil_id   VARCHAR(50)  NOT NULL,
+    wallet_tipo VARCHAR(20)  NOT NULL DEFAULT 'futures',
+    analise     JSON,
+    criado_em   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (perfil_id, wallet_tipo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS perfis_overrides (
+    perfil_id    VARCHAR(50)  NOT NULL,
+    wallet_tipo  VARCHAR(20)  NOT NULL DEFAULT 'futures',
+    overrides    JSON,
+    aprovado_em  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (perfil_id, wallet_tipo)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
 
@@ -356,6 +372,96 @@ async def trades_list(perfil_id: Optional[str] = None, tipo: str = "futures", li
     except Exception as e:
         print(f"[MySQL] trades_list erro: {e}")
         return []
+
+
+async def ia_analise_save(perfil_id: str, tipo: str, analise: dict) -> None:
+    """Salva ou atualiza resultado de análise IA para um perfil."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    INSERT INTO ia_analises (perfil_id, wallet_tipo, analise)
+                    VALUES (%s, %s, %s)
+                    ON DUPLICATE KEY UPDATE analise=%s, criado_em=NOW()
+                """, (perfil_id, tipo, json.dumps(analise, ensure_ascii=False),
+                      json.dumps(analise, ensure_ascii=False)))
+    except Exception as e:
+        print(f"[MySQL] ia_analise_save erro: {e}")
+
+
+async def ia_analise_load_all(tipo: str = "futures") -> dict[str, dict]:
+    """Carrega todas as análises IA salvas para um tipo."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT perfil_id, analise, criado_em FROM ia_analises WHERE wallet_tipo=%s",
+                    (tipo,)
+                )
+                rows = await cur.fetchall()
+                result = {}
+                for r in rows:
+                    data = json.loads(r["analise"] or "{}")
+                    data["_criado_em"] = r["criado_em"].isoformat() if r["criado_em"] else None
+                    result[r["perfil_id"]] = data
+                return result
+    except Exception as e:
+        print(f"[MySQL] ia_analise_load_all erro: {e}")
+        return {}
+
+
+async def overrides_save(perfil_id: str, tipo: str, overrides: dict) -> None:
+    """Salva overrides aprovados para um perfil."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    INSERT INTO perfis_overrides (perfil_id, wallet_tipo, overrides)
+                    VALUES (%s, %s, %s)
+                    ON DUPLICATE KEY UPDATE overrides=%s, aprovado_em=NOW()
+                """, (perfil_id, tipo, json.dumps(overrides, ensure_ascii=False),
+                      json.dumps(overrides, ensure_ascii=False)))
+    except Exception as e:
+        print(f"[MySQL] overrides_save erro: {e}")
+
+
+async def overrides_load_all(tipo: str = "futures") -> dict[str, dict]:
+    """Carrega todos os overrides aprovados para um tipo."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT perfil_id, overrides, aprovado_em FROM perfis_overrides WHERE wallet_tipo=%s",
+                    (tipo,)
+                )
+                rows = await cur.fetchall()
+                result = {}
+                for r in rows:
+                    data = json.loads(r["overrides"] or "{}")
+                    data["_aprovado_em"] = r["aprovado_em"].isoformat() if r["aprovado_em"] else None
+                    result[r["perfil_id"]] = data
+                return result
+    except Exception as e:
+        print(f"[MySQL] overrides_load_all erro: {e}")
+        return {}
+
+
+async def overrides_delete(perfil_id: str, tipo: str) -> None:
+    """Remove override de um perfil."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "DELETE FROM perfis_overrides WHERE perfil_id=%s AND wallet_tipo=%s",
+                    (perfil_id, tipo)
+                )
+    except Exception as e:
+        print(f"[MySQL] overrides_delete erro: {e}")
 
 
 async def historico_sinais(simbolo: Optional[str] = None, limit: int = 50) -> list[dict]:
