@@ -19,16 +19,54 @@ from .daytrade_engine import calcular_daytrade
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 
-BINANCE_SPOT  = "https://api.binance.com"
-MAX_KLINES    = 1000           # limite por request Binance
-EVAL_TFS      = ["1d", "4h", "1h"]  # TFs providos ao motor de sinal
-EVAL_INTERVAL = "4h"           # frequência de avaliação (loop principal)
-CUSTO_DEF     = 0.04           # 0.04% por lado (maker Binance)
-SLIP_DEF      = 0.05           # 0.05% por lado (slippage)
-MIN_CANDLES   = 50             # candles mínimos para avaliar
+BINANCE_FAPI  = "https://fapi.binance.com"
+# Railway/AWS bloqueia api.binance.com — usar múltiplos hosts com fallback
+_SPOT_HOSTS = [
+    "https://api.binance.com/api/v3",
+    "https://api1.binance.com/api/v3",
+    "https://api2.binance.com/api/v3",
+    "https://api3.binance.com/api/v3",
+    "https://data-api.binance.vision/api/v3",
+]
+MAX_KLINES    = 1000
+EVAL_TFS      = ["1d", "4h", "1h"]
+EVAL_INTERVAL = "4h"
+CUSTO_DEF     = 0.04
+SLIP_DEF      = 0.05
+MIN_CANDLES   = 50
 
 
 # ── Busca de dados históricos ─────────────────────────────────────────────────
+
+def _parse_kline(k: list) -> dict:
+    return {
+        "t":       int(k[0]),
+        "o":       float(k[1]),
+        "h":       float(k[2]),
+        "l":       float(k[3]),
+        "c":       float(k[4]),
+        "v":       float(k[5]),
+        "buy_vol": float(k[9]),
+        "trades":  int(k[8]),
+    }
+
+
+async def _fetch_page(
+    client: httpx.AsyncClient,
+    url: str,
+    params: dict,
+) -> list | None:
+    """Tenta um request e retorna a lista JSON ou None em caso de falha."""
+    try:
+        r = await client.get(url, params=params, timeout=30)
+        if r.status_code == 200:
+            data = r.json()
+            if isinstance(data, list) and data:
+                return data
+    except Exception:
+        pass
+    return None
+
 
 async def _fetch_klines(
     client: httpx.AsyncClient,
@@ -37,38 +75,38 @@ async def _fetch_klines(
     start_ms: int,
     end_ms: int,
 ) -> list[dict]:
-    """Busca klines com paginação automática (endpoint spot Binance)."""
+    """Busca klines com paginação e fallback multi-host (Futures → Spot hosts)."""
     result: list[dict] = []
     cur = start_ms
 
     while cur < end_ms:
-        resp = await client.get(
-            f"{BINANCE_SPOT}/api/v3/klines",
-            params={
-                "symbol":    simbolo,
-                "interval":  interval,
-                "startTime": cur,
-                "endTime":   end_ms,
-                "limit":     MAX_KLINES,
-            },
-            timeout=30,
+        base_params = {
+            "symbol":    simbolo,
+            "interval":  interval,
+            "startTime": cur,
+            "endTime":   end_ms,
+            "limit":     MAX_KLINES,
+        }
+
+        # 1. Tenta Binance Futures (funciona em Railway)
+        data = await _fetch_page(
+            client,
+            f"{BINANCE_FAPI}/fapi/v1/klines",
+            base_params,
         )
-        resp.raise_for_status()
-        data = resp.json()
-        if not data:
-            break
+
+        # 2. Fallback: hosts spot alternativos
+        if data is None:
+            for host in _SPOT_HOSTS:
+                data = await _fetch_page(client, f"{host}/klines", base_params)
+                if data is not None:
+                    break
+
+        if data is None:
+            break  # todos os hosts falharam
 
         for k in data:
-            result.append({
-                "t":       int(k[0]),
-                "o":       float(k[1]),
-                "h":       float(k[2]),
-                "l":       float(k[3]),
-                "c":       float(k[4]),
-                "v":       float(k[5]),
-                "buy_vol": float(k[9]),
-                "trades":  int(k[8]),
-            })
+            result.append(_parse_kline(k))
 
         last_t = int(data[-1][0])
         if last_t <= cur or len(data) < MAX_KLINES:
