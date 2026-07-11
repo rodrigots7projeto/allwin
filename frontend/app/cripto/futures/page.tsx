@@ -457,6 +457,13 @@ const BOT_PROFILES: BotProfile[] = [
     adaptive:true, capital:100000 },
 ];
 
+// ── IA Profiles dynamic extension ────────────────────────────────────────────
+// IA profiles deployed from the Backtest IA page are appended here at runtime
+const _iaExtras: FuturesPerfilConfig[] = [];
+function getAllPerfis(): FuturesPerfilConfig[] {
+  return _iaExtras.length ? [...PERFIS_FUTURES, ..._iaExtras] : PERFIS_FUTURES;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function emptyFuturesWallet(capital = 100000): FuturesWallet {
@@ -464,7 +471,7 @@ function emptyFuturesWallet(capital = 100000): FuturesWallet {
 }
 
 function emptyMultiFutures(): Record<string, FuturesWallet> {
-  return Object.fromEntries(PERFIS_FUTURES.map(p => [p.id, emptyFuturesWallet(p.capital_inicial ?? 100000)]));
+  return Object.fromEntries(getAllPerfis().map(p => [p.id, emptyFuturesWallet(p.capital_inicial ?? 100000)]));
 }
 
 function fmt(n: number, d = 2) { return n.toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }); }
@@ -898,7 +905,7 @@ function useFuturesWallet() {
     setWallets(prev => persist(fn(prev)));
 
   const abrirFutures = useCallback((perfilId: string, simbolo: string, price_brl: number, usd_brl: number, score: number, direction: "LONG" | "SHORT", auto = false, grade = "") => {
-    const cfg = PERFIS_FUTURES.find(p => p.id === perfilId);
+    const cfg = getAllPerfis().find(p => p.id === perfilId);
     if (!cfg) return;
     upd(prev => {
       const w = prev[perfilId];
@@ -973,7 +980,7 @@ function useFuturesWallet() {
   }, []);
 
   const resetPerfil = useCallback((perfilId: string) => {
-    const cfg = PERFIS_FUTURES.find(p => p.id === perfilId);
+    const cfg = getAllPerfis().find(p => p.id === perfilId);
     const cap = cfg?.capital_inicial ?? 100000;
     upd(prev => ({ ...prev, [perfilId]: emptyFuturesWallet(cap) }));
     // Reset no backend
@@ -986,7 +993,17 @@ function useFuturesWallet() {
     try { localStorage.setItem(FUT_WALLET_KEY, JSON.stringify(w)); } catch {}
   }, []);
 
-  return { wallets, abrirFutures, fecharFutures, atualizarTodos, resetPerfil, resetAll };
+  const addExtraPerfis = useCallback((newPerfis: FuturesPerfilConfig[]) => {
+    setWallets(prev => {
+      const next = { ...prev };
+      for (const p of newPerfis) {
+        if (!next[p.id]) next[p.id] = emptyFuturesWallet(p.capital_inicial ?? 100000);
+      }
+      return persist(next);
+    });
+  }, []);
+
+  return { wallets, abrirFutures, fecharFutures, atualizarTodos, resetPerfil, resetAll, addExtraPerfis };
 }
 
 function useFuturesBanco() {
@@ -1381,7 +1398,7 @@ function FuturesCarteiraView({ wallet, cfg, onFechar, onReset, onAtualizar, onSa
 // ── Comparativo View ──────────────────────────────────────────────────────────
 
 function FuturesComparativoView({ wallets, onSelect, onResetAll }: { wallets: Record<string, FuturesWallet>; onSelect: (id: string) => void; onResetAll: () => void }) {
-  const rows = PERFIS_FUTURES.map(cfg => ({ cfg, stats: calcFuturesStats(wallets[cfg.id] ?? emptyFuturesWallet(cfg.capital_inicial)) }));
+  const rows = getAllPerfis().map(cfg => ({ cfg, stats: calcFuturesStats(wallets[cfg.id] ?? emptyFuturesWallet(cfg.capital_inicial)) }));
   rows.sort((a, b) => b.stats.roi - a.stats.roi);
 
   return (
@@ -1418,6 +1435,7 @@ function FuturesComparativoView({ wallets, onSelect, onResetAll }: { wallets: Re
                     <span className="mr-1">{cfg.emoji}</span>
                     <span className="font-bold">{cfg.nome}</span>
                     <span className="ml-1 text-[9px] font-semibold" style={{ color: cfg.cor }}>{cfg.nivel}</span>
+                    {cfg.id.startsWith("ia_") && <span className="ml-1 text-[8px] px-1 rounded font-bold" style={{ background: "#7c3aed22", color: "#a78bfa" }}>🤖</span>}
                   </td>
                   <td className="px-3 py-2.5 text-center">
                     <span className="text-[9px] font-bold" style={{ color: cfg.direction_allowed === "LONG" ? "#10b981" : "#a855f7" }}>
@@ -1955,7 +1973,7 @@ function gerarSinaisIA(scan: FuturesScanData, wallets: Record<string, FuturesWal
     if (it.direction === "NEUTRO" || it.score_final < 28) continue;
     const matched: string[] = [];
     const matchedCfgs: FuturesPerfilConfig[] = [];
-    for (const cfg of PERFIS_FUTURES) {
+    for (const cfg of getAllPerfis()) {
       if (podeEntrarFutures(cfg, it)) { matched.push(`${cfg.nome} ${cfg.nivel}`); matchedCfgs.push(cfg); }
     }
     if (matched.length === 0) continue;
@@ -2369,14 +2387,14 @@ function FuturesAllWalletsView({ wallets, scan, autoTrade, setAutoTrade, onFecha
   const [expandido, setExpandido]     = useState<string | null>(null);
   const usd = scan?.usd_brl ?? 5.2;
 
-  const allW = PERFIS_FUTURES.map(cfg => ({
+  const allW = getAllPerfis().map(cfg => ({
     cfg, w: wallets[cfg.id] ?? emptyFuturesWallet(cfg.capital_inicial),
     stats: calcFuturesStats(wallets[cfg.id] ?? emptyFuturesWallet(cfg.capital_inicial)),
   }));
 
   // Aggregates
   const totalCapital  = allW.reduce((a, { stats }) => a + stats.capital, 0);
-  const totalInicial  = PERFIS_FUTURES.reduce((a, c) => a + (c.capital_inicial ?? 100000), 0);
+  const totalInicial  = getAllPerfis().reduce((a, c) => a + (c.capital_inicial ?? 100000), 0);
   const totalPnl      = totalCapital - totalInicial;
   const totalPos      = allW.reduce((a, { stats }) => a + stats.posicoes, 0);
   const totalOps      = allW.reduce((a, { stats }) => a + stats.ops, 0);
@@ -2441,8 +2459,9 @@ function FuturesAllWalletsView({ wallets, scan, autoTrade, setAutoTrade, onFecha
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-lg shrink-0">{cfg.emoji}</span>
                   <div className="min-w-0">
-                    <div className="font-bold text-sm truncate" style={{ color: "var(--text-primary)" }}>
+                    <div className="flex items-center gap-1.5 font-bold text-sm truncate" style={{ color: "var(--text-primary)" }}>
                       {cfg.nome} <span style={{ color: cfg.cor }}>{cfg.nivel}</span>
+                      {cfg.id.startsWith("ia_") && <span className="text-[9px] px-1 py-0.5 rounded font-bold" style={{ background: "#7c3aed22", color: "#a78bfa", border: "1px solid #7c3aed44" }}>🤖 IA</span>}
                     </div>
                     <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
                       {cfg.direction_allowed} · {cfg.long_filter ? `TEC≥${cfg.long_filter.tec_min}/FLX≥${cfg.long_filter.flx_min}` : cfg.short_filter ? `TEC≤${cfg.short_filter.tec_max}/FLX≤${cfg.short_filter.flx_max}` : `sc≥${cfg.score_compra}`} · SL{(cfg.sl_pct*100).toFixed(0)}%/TP{(cfg.tp_pct*100).toFixed(0)}%
@@ -2615,7 +2634,7 @@ function FuturesIAView({ wallets, scan, activePerfilId, onSelectPerfil, autoTrad
   const items = scan?.geral ?? [];
   const usd   = scan?.usd_brl ?? 5.2;
 
-  const rows = PERFIS_FUTURES.map(cfg => {
+  const rows = getAllPerfis().map(cfg => {
     const w       = wallets[cfg.id] ?? emptyFuturesWallet(cfg.capital_inicial);
     const stats   = calcFuturesStats(w);
     const sinais  = contarSinaisAtivos(cfg, items);
@@ -2744,6 +2763,7 @@ function FuturesIAView({ wallets, scan, activePerfilId, onSelectPerfil, autoTrad
                       <span className="mr-1">{cfg.emoji}</span>
                       <span className="font-bold" style={{ color: active ? cfg.cor : "var(--text-primary)" }}>{cfg.nome}</span>
                       <span className="ml-1 text-[9px] font-semibold" style={{ color: cfg.cor }}>{cfg.nivel}</span>
+                      {cfg.id.startsWith("ia_") && <span className="ml-1 text-[8px] px-1 rounded font-bold" style={{ background: "#7c3aed22", color: "#a78bfa" }}>🤖</span>}
                       {active && <span className="ml-1 text-[8px] font-black text-emerald-400 bg-emerald-400/10 px-1 rounded">ATIVO</span>}
                     </td>
                     <td className="px-3 py-2.5">
@@ -2948,6 +2968,170 @@ function ScalpSignalCard({ it, wallets }: { it: FuturesItem; wallets: Record<str
   );
 }
 
+function ScalpHistoricoPanel({ pid, wallets }: { pid: string; wallets: Record<string, FuturesWallet> }) {
+  const cfg = PERFIS_FUTURES.find(p => p.id === pid)!;
+  const w   = wallets[pid] ?? emptyFuturesWallet();
+  if (!cfg) return null;
+
+  const allTrades  = [...w.trades].sort((a, b) => b.time - a.time);
+  const vendas     = allTrades.filter(t => t.tipo === "V");
+  const longs      = vendas.filter(t => t.direction === "LONG").length;
+  const shorts     = vendas.filter(t => t.direction === "SHORT").length;
+  const wins       = vendas.filter(t => (t.pnl_brl ?? 0) > 0).length;
+  const pnlFechado = vendas.reduce((a, t) => a + (t.pnl_brl ?? 0), 0);
+  const stats      = calcFuturesStats(w);
+
+  return (
+    <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${cfg.cor}40`, background: "var(--bg-card)" }}>
+      {/* Header do painel */}
+      <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: "1px solid var(--border)", background: `${cfg.cor}08` }}>
+        <span className="text-lg">{cfg.emoji}</span>
+        <div>
+          <div className="font-black text-sm" style={{ color: cfg.cor }}>{cfg.nome} {cfg.nivel}</div>
+          <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+            {cfg.direction_allowed} · SL {(cfg.sl_pct*100).toFixed(1)}% · TP {(cfg.tp_pct*100).toFixed(1)}% · {cfg.descricao}
+          </div>
+        </div>
+        <div className="ml-auto text-right">
+          <div className="font-black text-sm" style={{ color: stats.pnl >= 0 ? "#22c55e" : "#ef4444" }}>
+            {stats.pnl >= 0 ? "+" : ""}R$ {Math.abs(stats.pnl).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
+          </div>
+          <div className="text-[10px]" style={{ color: stats.roi >= 0 ? "#22c55e" : "#ef4444" }}>
+            {stats.roi >= 0 ? "+" : ""}{stats.roi.toFixed(2)}% ROI
+          </div>
+        </div>
+      </div>
+
+      {/* Summary chips */}
+      <div className="grid grid-cols-4 gap-2 px-4 pt-3 pb-2">
+        {[
+          { l: "Operações",   v: String(vendas.length),  c: "var(--text-primary)" },
+          { l: "LONG",        v: String(longs),           c: "#22c55e" },
+          { l: "SHORT",       v: String(shorts),          c: "#ef4444" },
+          { l: "P&L Fechado", v: `${pnlFechado >= 0 ? "+" : ""}R$ ${Math.abs(pnlFechado).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`, c: pnlFechado >= 0 ? "#22c55e" : "#ef4444" },
+        ].map(({ l, v, c }) => (
+          <div key={l} className="rounded-lg p-2 text-[10px]" style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
+            <div style={{ color: "var(--text-muted)" }}>{l}</div>
+            <div className="font-bold mt-0.5 tabular-nums" style={{ color: c }}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Win rate linha */}
+      <div className="flex gap-3 px-4 pb-2 text-[9px]" style={{ color: "var(--text-muted)" }}>
+        <span>Win Rate: <b style={{ color: stats.win_rate >= 50 ? "#22c55e" : "#ef4444" }}>{vendas.length > 0 ? `${stats.win_rate.toFixed(0)}%` : "—"}</b></span>
+        <span>·</span>
+        <span>Wins: <b style={{ color: "#22c55e" }}>{wins}</b></span>
+        <span>·</span>
+        <span>P.Factor: <b style={{ color: stats.profit_factor >= 1.2 ? "#22c55e" : "#ef4444" }}>{vendas.length > 0 ? (stats.profit_factor === 999 ? "∞" : stats.profit_factor.toFixed(2)) : "—"}</b></span>
+        <span>·</span>
+        <span>Drawdown: <b style={{ color: stats.drawdown > 10 ? "#ef4444" : "var(--text-primary)" }}>{stats.drawdown.toFixed(1)}%</b></span>
+        <span>·</span>
+        <span>Capital: <b style={{ color: "var(--text-primary)" }}>R$ {stats.capital.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}</b></span>
+      </div>
+
+      {/* Posições abertas */}
+      {Object.keys(w.positions).length > 0 && (
+        <div className="mx-4 mb-2 rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+          <div className="px-3 py-1.5 text-[10px] font-bold" style={{ background: "rgba(34,197,94,0.08)", color: "#22c55e", borderBottom: "1px solid var(--border)" }}>
+            ⚡ Posições Abertas
+          </div>
+          {Object.values(w.positions).map(pos => {
+            const curr = pos.last_price_brl;
+            const pnl  = pos.direction === "LONG"
+              ? (curr - pos.entry_price_brl) * pos.units
+              : (pos.entry_price_brl - curr) * pos.units;
+            const pct  = (pnl / pos.amount_brl) * 100;
+            return (
+              <div key={pos.simbolo} className="flex items-center gap-3 px-3 py-2" style={{ borderBottom: "1px solid var(--border)" }}>
+                <span className="text-sm">{COIN_EMOJI[pos.simbolo] ?? "○"}</span>
+                <span className="font-bold text-xs" style={{ color: "var(--text-primary)" }}>{pos.simbolo}</span>
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: pos.direction === "LONG" ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)", color: pos.direction === "LONG" ? "#22c55e" : "#ef4444" }}>
+                  {pos.direction}
+                </span>
+                <span className="text-[10px] tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                  Entrada: R$ {pos.entry_price_brl.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}
+                </span>
+                <div className="flex-1" />
+                <span className="font-black text-xs tabular-nums" style={{ color: pct >= 0 ? "#22c55e" : "#ef4444" }}>
+                  {pct >= 0 ? "+" : ""}{pct.toFixed(2)}% ({pnl >= 0 ? "+" : ""}R$ {Math.abs(pnl).toFixed(0)})
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Trade log */}
+      <div className="pb-2">
+        {allTrades.length === 0 ? (
+          <div className="px-4 py-6 text-center text-[11px]" style={{ color: "var(--text-muted)" }}>
+            <span className="text-2xl block mb-2">⚡</span>
+            Nenhuma operação registrada ainda. O auto trade abrirá posições quando detectar sinais.
+          </div>
+        ) : (
+          <div className="overflow-y-auto" style={{ maxHeight: 320 }}>
+            <table className="w-full text-[10px]" style={{ borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: "var(--bg)", position: "sticky", top: 0 }}>
+                  {["Data/Hora", "Moeda", "Tipo", "Dir", "Preço BRL", "Volume", "P&L", "Score", "Motivo"].map(h => (
+                    <th key={h} className="px-2 py-2 text-left font-semibold border-b" style={{ color: "var(--text-muted)", borderColor: "var(--border)" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {allTrades.map((t, i) => {
+                  const isOpen = t.tipo === "C";
+                  const pnl    = t.pnl_brl ?? 0;
+                  const motivo = isOpen ? (t.motivo_entrada ?? "—") : (t.motivo_saida ?? "—");
+                  const dt     = new Date(t.time);
+                  const hora   = `${dt.getDate().toString().padStart(2,"0")}/${(dt.getMonth()+1).toString().padStart(2,"0")} ${dt.getHours().toString().padStart(2,"0")}:${dt.getMinutes().toString().padStart(2,"0")}`;
+                  return (
+                    <tr key={t.id} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)" }}>
+                      <td className="px-2 py-1.5 tabular-nums whitespace-nowrap" style={{ color: "var(--text-muted)" }}>{hora}</td>
+                      <td className="px-2 py-1.5 font-bold whitespace-nowrap" style={{ color: "var(--text-primary)" }}>
+                        {(COIN_EMOJI[t.simbolo] ?? "○")} {t.simbolo}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold" style={{
+                          background: isOpen ? "rgba(59,130,246,0.15)" : "rgba(107,114,128,0.15)",
+                          color: isOpen ? "#60a5fa" : "#9ca3af",
+                        }}>
+                          {isOpen ? "ABRE" : "FECHA"}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <span className="font-bold" style={{ color: t.direction === "LONG" ? "#22c55e" : "#ef4444" }}>
+                          {t.direction}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums whitespace-nowrap" style={{ color: "var(--text-secondary)" }}>
+                        R$ {t.price_brl.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                        R$ {t.amount_brl.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums font-bold whitespace-nowrap" style={{ color: isOpen ? "var(--text-muted)" : pnl >= 0 ? "#22c55e" : "#ef4444" }}>
+                        {isOpen ? "—" : `${pnl >= 0 ? "+" : ""}R$ ${Math.abs(pnl).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}`}
+                      </td>
+                      <td className="px-2 py-1.5 tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                        {t.score?.toFixed(0) ?? "—"}
+                      </td>
+                      <td className="px-2 py-1.5" style={{ color: "var(--text-muted)", maxWidth: 140 }}>
+                        <span className="truncate block" title={motivo}>{motivo.slice(0, 35)}{motivo.length > 35 ? "…" : ""}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FuturesScalpView({
   scan, wallets, autoTrade, setAutoTrade,
 }: {
@@ -2956,8 +3140,9 @@ function FuturesScalpView({
   autoTrade: boolean;
   setAutoTrade: (v: boolean) => void;
 }) {
-  const [filterDir, setFilterDir] = useState<"ALL" | "LONG" | "SHORT">("ALL");
-  const [sortBy,    setSortBy]    = useState<"forca" | "score">("forca");
+  const [filterDir,    setFilterDir]    = useState<"ALL" | "LONG" | "SHORT">("ALL");
+  const [sortBy,       setSortBy]       = useState<"forca" | "score">("forca");
+  const [expandedHist, setExpandedHist] = useState<typeof SCALP_PERFIS[number] | null>(null);
 
   if (!scan) {
     return (
@@ -3013,41 +3198,81 @@ function FuturesScalpView({
           </button>
         </div>
 
-        {/* Resumo dos 3 perfis */}
+        {/* Resumo dos 3 perfis — clicável para ver histórico */}
         <div className="grid grid-cols-3 gap-3">
           {SCALP_PERFIS.map(pid => {
             const cfg = PERFIS_FUTURES.find(p => p.id === pid)!;
             if (!cfg) return null;
-            const w   = wallets[pid];
+            const w        = wallets[pid];
+            const wStats   = calcFuturesStats(w ?? emptyFuturesWallet());
             const posCount = w ? Object.keys(w.positions).length : 0;
-            const pnl = w ? (Object.values(w.positions).reduce((a, p) => {
+            const pnl      = w ? (Object.values(w.positions).reduce((a, p) => {
               const curr = p.last_price_brl;
               const v = p.direction === "LONG" ? (curr - p.entry_price_brl) * p.units : (p.entry_price_brl - curr) * p.units;
               return a + v;
             }, 0)) : 0;
-            const cor = cfg.cor;
+            const cor       = cfg.cor;
+            const isOpen    = expandedHist === pid;
+            const opsTotal  = (w?.trades ?? []).filter(t => t.tipo === "V").length;
             return (
-              <div key={pid} className="rounded-xl p-3 flex flex-col gap-1"
-                style={{ background: "var(--bg-card)", border: `1px solid ${cor}40` }}>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-sm">{cfg.emoji}</span>
-                  <span className="text-[11px] font-bold" style={{ color: cor }}>{cfg.nome} {cfg.nivel}</span>
+              <button key={pid}
+                onClick={() => setExpandedHist(isOpen ? null : pid as typeof SCALP_PERFIS[number])}
+                className="rounded-xl p-3 flex flex-col gap-1 text-left transition-all hover:scale-[1.01]"
+                style={{
+                  background: isOpen ? `${cor}12` : "var(--bg-card)",
+                  border: `1px solid ${isOpen ? cor : cor + "40"}`,
+                  cursor: "pointer",
+                }}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm">{cfg.emoji}</span>
+                    <span className="text-[11px] font-bold" style={{ color: cor }}>{cfg.nome} {cfg.nivel}</span>
+                  </div>
+                  <span className="text-[9px]" style={{ color: isOpen ? cor : "var(--text-muted)" }}>
+                    {isOpen ? "▲ Fechar" : "▼ Histórico"}
+                  </span>
                 </div>
                 <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>
-                  {cfg.long_filter ? `LONG: TEC≥${cfg.long_filter.tec_min}/FLX≥${cfg.long_filter.flx_min}/CTX≥${cfg.long_filter.ctx_min}/FND≥${cfg.long_filter.fnd_min}` : cfg.short_filter ? `SHORT: TEC≤${cfg.short_filter.tec_max}/FLX≤${cfg.short_filter.flx_max}` : `sc≥${cfg.score_compra}`} · SL {(cfg.sl_pct * 100).toFixed(1)}% · TP {(cfg.tp_pct * 100).toFixed(1)}%
+                  SL {(cfg.sl_pct * 100).toFixed(1)}% · TP {(cfg.tp_pct * 100).toFixed(1)}% · {cfg.direction_allowed}
                 </div>
                 <div className="flex items-center justify-between mt-1">
-                  <span className="text-[10px]" style={{ color: "var(--text-secondary)" }}>
-                    {posCount} posição{posCount !== 1 ? "ões" : ""}
-                  </span>
-                  <span className="text-[10px] font-black" style={{ color: pnl >= 0 ? "#22c55e" : "#ef4444" }}>
-                    {pnl >= 0 ? "+" : ""}R$ {Math.abs(pnl).toFixed(0)}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px]" style={{ color: "var(--text-secondary)" }}>
+                      {posCount > 0 ? `${posCount} pos. aberta${posCount > 1 ? "s" : ""}` : "Sem posição"}
+                    </span>
+                    {opsTotal > 0 && (
+                      <span className="text-[9px] px-1 rounded" style={{ background: "var(--border)", color: "var(--text-muted)" }}>
+                        {opsTotal} ops · WR {wStats.win_rate.toFixed(0)}%
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] font-black" style={{ color: pnl >= 0 ? "#22c55e" : pnl < 0 ? "#ef4444" : "var(--text-muted)" }}>
+                    {pnl !== 0 ? `${pnl >= 0 ? "+" : ""}R$ ${Math.abs(pnl).toFixed(0)}` : "—"}
                   </span>
                 </div>
-              </div>
+                {/* Mini ROI bar */}
+                {wStats.ops > 0 && (
+                  <div className="mt-1 flex items-center gap-2">
+                    <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
+                      <div className="h-full rounded-full" style={{
+                        width: `${Math.min(100, Math.abs(wStats.roi) * 2)}%`,
+                        background: wStats.roi >= 0 ? "#22c55e" : "#ef4444",
+                      }} />
+                    </div>
+                    <span className="text-[9px] tabular-nums shrink-0" style={{ color: wStats.roi >= 0 ? "#22c55e" : "#ef4444" }}>
+                      {wStats.roi >= 0 ? "+" : ""}{wStats.roi.toFixed(2)}%
+                    </span>
+                  </div>
+                )}
+              </button>
             );
           })}
         </div>
+
+        {/* Painel de histórico expandido */}
+        {expandedHist && (
+          <ScalpHistoricoPanel pid={expandedHist} wallets={wallets} />
+        )}
 
         {/* Stats rápidos */}
         <div className="grid grid-cols-4 gap-3">
@@ -3127,9 +3352,23 @@ export default function FuturesPage() {
   const [btcDom, setBtcDom]         = useState<number | undefined>();
   const [loadingScan, setLoadingScan] = useState(false);
 
-  const { wallets, abrirFutures, fecharFutures, atualizarTodos, resetPerfil, resetAll } = useFuturesWallet();
+  const { wallets, abrirFutures, fecharFutures, atualizarTodos, resetPerfil, resetAll, addExtraPerfis } = useFuturesWallet();
   const { banco, salvar: salvarBanco, removerData }                                      = useFuturesBanco();
   const { botWallets, resetBot, resetAllBots }                                           = useBotWallets(scan);
+
+  // Load IA profiles deployed from Backtest IA page
+  useEffect(() => {
+    fetch(`${API}/cripto/backtest/ia-futures-profiles`)
+      .then(r => r.ok ? r.json() : [])
+      .then((profiles: FuturesPerfilConfig[]) => {
+        if (profiles.length > 0) {
+          _iaExtras.length = 0;
+          _iaExtras.push(...profiles);
+          addExtraPerfis(_iaExtras);
+        }
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const walletsRef       = useRef(wallets);
   const abrirRef         = useRef(abrirFutures);
@@ -3146,7 +3385,7 @@ export default function FuturesPage() {
     totalNR: number; tentativas: number; bloqueadas: number; erro: string;
   } | null>(null);
 
-  const activeCfg    = PERFIS_FUTURES.find(p => p.id === activePerfilId)!;
+  const activeCfg    = getAllPerfis().find(p => p.id === activePerfilId)!;
   const activeWallet = wallets[activePerfilId] ?? emptyFuturesWallet();
 
   // Fetch scan
@@ -3184,7 +3423,7 @@ export default function FuturesPage() {
       atualizarRef.current(itens);
       const snap = walletsRef.current;
 
-      for (const cfg of PERFIS_FUTURES) {
+      for (const cfg of getAllPerfis()) {
         const w = snap[cfg.id];
         if (!w) continue;
 
@@ -3261,7 +3500,7 @@ export default function FuturesPage() {
   }, [activeCfg, activeWallet, salvarBanco]);
 
   const handleSalvarTodos = useCallback(() => {
-    salvarBanco(PERFIS_FUTURES.map(cfg => walletToFuturesBancoEntry(cfg, wallets[cfg.id] ?? emptyFuturesWallet(cfg.capital_inicial))));
+    salvarBanco(getAllPerfis().map(cfg => walletToFuturesBancoEntry(cfg, wallets[cfg.id] ?? emptyFuturesWallet(cfg.capital_inicial))));
   }, [wallets, salvarBanco]);
 
   // Tab button

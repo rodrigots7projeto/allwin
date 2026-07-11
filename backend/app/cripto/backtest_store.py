@@ -150,3 +150,32 @@ def list_custom_profiles() -> list[dict]:
 def get_custom_profile(pid: str) -> dict | None:
     profiles = _read_json(_CUSTOM_PROFILES_F, [])
     return next((p for p in profiles if p["id"] == pid), None)
+
+
+# ── Perfis IA deployados no Futures ──────────────────────────────────────────
+
+_IA_FUTURES_F = _BASE / "ia_futures_profiles.json"
+
+
+def save_ia_futures_profile(profile: dict) -> str:
+    profiles = _read_json(_IA_FUTURES_F, [])
+    pid = profile.get("id") or f"ia_{str(uuid.uuid4())[:8]}"
+    profile["id"] = pid
+    profile["deployado_em"] = datetime.now(timezone.utc).isoformat()
+    profiles = [p for p in profiles if p.get("id") != pid]
+    profiles.append(profile)
+    _write_json(_IA_FUTURES_F, profiles)
+    return pid
+
+
+def list_ia_futures_profiles() -> list[dict]:
+    return _read_json(_IA_FUTURES_F, [])
+
+
+def remove_ia_futures_profile(pid: str) -> bool:
+    profiles = _read_json(_IA_FUTURES_F, [])
+    new = [p for p in profiles if p.get("id") != pid]
+    if len(new) == len(profiles):
+        return False
+    _write_json(_IA_FUTURES_F, new)
+    return True

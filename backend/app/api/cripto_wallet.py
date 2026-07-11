@@ -24,7 +24,7 @@ from ..db.mysql import (
 
 router = APIRouter(tags=["wallet — simuladas"])
 
-VALID_TIPOS = {"futures", "daytrade"}
+VALID_TIPOS = {"futures", "daytrade", "bot"}
 
 
 def _check_tipo(tipo: str) -> None:

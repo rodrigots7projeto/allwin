@@ -524,6 +524,26 @@ async function _dtSyncWallet(perfilId: string, w: SimWallet) {
   } catch { /* silencioso */ }
 }
 
+// Migra localStorage → backend quando MySQL está vazio ou só tem carteiras padrão
+async function _pushDaytradeLocalToBackend(localWallets: Record<string, SimWallet>) {
+  const temDados = Object.values(localWallets).some(
+    w => w.trades.length > 0 || Object.keys(w.positions).length > 0
+  );
+  if (!temDados) return;
+  try {
+    const payload = Object.fromEntries(
+      Object.entries(localWallets).map(([pid, w]) => [
+        pid, { saldo_inicial: w.saldo_inicial, saldo_livre: w.saldo_livre, positions: w.positions, trades: w.trades },
+      ])
+    );
+    await fetch(`${API}/cripto/wallets/daytrade/sync_all`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch { /* silencioso */ }
+}
+
 function useMultiWallet() {
   const [wallets, setWallets] = useState<Record<string, SimWallet>>(() => {
     try {
@@ -537,12 +557,25 @@ function useMultiWallet() {
     return emptyMultiWallet();
   });
 
-  // Carrega estado persistido do backend na montagem
+  // Carrega do backend na montagem
+  // Se backend tem dados reais → usa backend; se vazio/só padrão → migra localStorage
   useEffect(() => {
+    const localSnapshot = wallets;
     fetch(`${API}/cripto/wallets/daytrade`)
       .then(r => r.ok ? r.json() : null)
       .then((data: Record<string, SimWallet> | null) => {
-        if (!data || Object.keys(data).length === 0) return;
+        if (!data || Object.keys(data).length === 0) {
+          _pushDaytradeLocalToBackend(localSnapshot);
+          return;
+        }
+        const temDadosReais = Object.values(data).some(
+          (w: SimWallet) => (Array.isArray(w.trades) && w.trades.length > 0) ||
+            Object.keys((w.positions as Record<string, unknown>) ?? {}).length > 0
+        );
+        if (!temDadosReais) {
+          _pushDaytradeLocalToBackend(localSnapshot);
+          return;
+        }
         const base = emptyMultiWallet();
         const merged = { ...base };
         for (const [pid, w] of Object.entries(data)) {
@@ -1818,6 +1851,198 @@ function learnInfo(trades: SimTrade[], scoreBase: number): { delta: number; scor
   return { delta: 0, scoreEfetivo, icon: "⚖️", label: "Calibrado", cor: "#6b7280" };
 }
 
+// ── Histórico View — P&L longo prazo por perfil ──────────────────────────────
+
+const COIN_EMO: Record<string, string> = {
+  BTC:"₿", ETH:"Ξ", SOL:"◎", BNB:"⬡", XRP:"✕", DOGE:"Ð", ADA:"₳",
+  AVAX:"△", LINK:"⬡", LTC:"Ł", DOT:"●", MATIC:"◆", BCH:"₿", UNI:"🦄",
+  AAVE:"👻", NEAR:"Ⓝ", ARB:"🔵", OP:"🔴", SUI:"💧",
+};
+
+function HistoricoView({ wallets, onReset }: { wallets: Record<string, SimWallet>; onReset: (id: string) => void }) {
+  const [expandido, setExpandido] = useState<string | null>(null);
+
+  const allRows = PERFIS.map(cfg => {
+    const w     = wallets[cfg.id] ?? emptyWallet(cfg.capital_inicial);
+    const stats = calcWalletStats(w);
+    return { cfg, w, stats };
+  });
+
+  const totalCapital = allRows.reduce((a, r) => a + r.stats.capital, 0);
+  const totalInicial = PERFIS.reduce((a, c) => a + (c.capital_inicial ?? 100000), 0);
+  const totalPnl     = totalCapital - totalInicial;
+  const totalOps     = allRows.reduce((a, r) => a + r.stats.ops, 0);
+  const totalWins    = allRows.reduce((a, r) => a + r.w.trades.filter(t => t.tipo === "V" && (t.pnl_brl ?? 0) > 0).length, 0);
+  const globalWR     = totalOps > 0 ? (totalWins / totalOps * 100) : 0;
+
+  return (
+    <div className="flex flex-col gap-5">
+
+      {/* Resumo global */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { l: "Capital Total",    v: `R$ ${totalCapital.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`,                                cor: "var(--text-primary)" },
+          { l: "P&L Acumulado",   v: `${totalPnl >= 0 ? "+" : ""}R$ ${Math.abs(totalPnl).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`, sub: `${(totalPnl/totalInicial*100).toFixed(2)}%`, cor: totalPnl >= 0 ? "#10b981" : "#ef4444" },
+          { l: "Operações Totais", v: String(totalOps),                                                                                             cor: "var(--text-primary)" },
+          { l: "Win Rate Global",  v: totalOps > 0 ? `${globalWR.toFixed(0)}%` : "—",                                                             sub: `${totalWins} wins`, cor: globalWR >= 50 ? "#10b981" : "#ef4444" },
+        ].map(({ l, v, sub, cor }) => (
+          <div key={l} className="p-3 rounded-xl" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+            <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>{l}</div>
+            <div className="text-lg font-black leading-tight mt-0.5" style={{ color: cor }}>{v}</div>
+            {sub && <div className="text-[9px] mt-0.5" style={{ color: cor }}>{sub}</div>}
+          </div>
+        ))}
+      </div>
+
+      {/* Cards por perfil */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        {allRows.map(({ cfg, w, stats }) => {
+          const isExpanded  = expandido === cfg.id;
+          const pnlTotal    = stats.capital - w.saldo_inicial;
+          const allTrades   = [...w.trades].sort((a, b) => b.time - a.time);
+          const vendas      = allTrades.filter(t => t.tipo === "V");
+          const pnlFechado  = vendas.reduce((a, t) => a + (t.pnl_brl ?? 0), 0);
+          const wins        = vendas.filter(t => (t.pnl_brl ?? 0) > 0).length;
+
+          return (
+            <div key={cfg.id} className="rounded-xl overflow-hidden transition-all"
+              style={{ border: `1px solid ${pnlTotal >= 0 ? cfg.cor + "50" : "rgba(239,68,68,0.3)"}`, background: "var(--bg-card)" }}>
+
+              {/* Header clicável */}
+              <div className="flex items-center justify-between px-4 py-3 cursor-pointer select-none"
+                style={{ background: pnlTotal >= 0 ? `${cfg.cor}08` : "rgba(239,68,68,0.04)" }}
+                onClick={() => setExpandido(isExpanded ? null : cfg.id)}>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-lg shrink-0">{cfg.emoji}</span>
+                  <div className="min-w-0">
+                    <div className="font-bold text-sm truncate" style={{ color: "var(--text-primary)" }}>
+                      {cfg.nome} <span style={{ color: cfg.cor }}>{cfg.nivel}</span>
+                    </div>
+                    <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                      sc≥{cfg.score_compra} · SL{(cfg.sl_pct*100).toFixed(1)}% TP{(cfg.tp_pct*100).toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right shrink-0 ml-2">
+                  <div className="font-black text-base" style={{ color: pnlTotal >= 0 ? "#10b981" : "#ef4444" }}>
+                    {pnlTotal >= 0 ? "+" : ""}R$ {Math.abs(pnlTotal).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
+                  </div>
+                  <div className="text-[9px]" style={{ color: stats.roi >= 0 ? "#10b981" : "#ef4444" }}>
+                    {stats.roi >= 0 ? "+" : ""}{stats.roi.toFixed(2)}% · {stats.ops} ops
+                  </div>
+                </div>
+              </div>
+
+              {/* Mini stats sempre visíveis */}
+              <div className="grid grid-cols-4 px-3 py-2 gap-1 border-t" style={{ borderColor: "var(--border)" }}>
+                {[
+                  { l: "Ops",      v: String(vendas.length) },
+                  { l: "Wins",     v: String(wins),           c: "#10b981" },
+                  { l: "Win Rate", v: stats.ops > 0 ? `${stats.win_rate.toFixed(0)}%` : "—", c: stats.win_rate >= 50 ? "#10b981" : "#ef4444" },
+                  { l: "P.Factor", v: stats.ops > 0 ? (stats.profit_factor === 999 ? "∞" : stats.profit_factor.toFixed(1)) : "—", c: stats.profit_factor >= 1.2 ? "#10b981" : "#ef4444" },
+                ].map(({ l, v, c }) => (
+                  <div key={l} className="text-center text-[9px]">
+                    <div style={{ color: "var(--text-muted)" }}>{l}</div>
+                    <div className="font-bold mt-0.5" style={{ color: c ?? "var(--text-primary)" }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Log expandido */}
+              {isExpanded && (() => {
+                return (
+                  <div className="border-t flex flex-col" style={{ borderColor: "var(--border)", background: "var(--bg)" }}>
+
+                    {/* Chips detalhados */}
+                    <div className="grid grid-cols-3 gap-1.5 px-3 pt-3">
+                      {[
+                        { l: "P&L Fechado",  v: `${pnlFechado >= 0 ? "+" : ""}R$ ${Math.abs(pnlFechado).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}`, c: pnlFechado >= 0 ? "#10b981" : "#ef4444" },
+                        { l: "Drawdown",     v: `${stats.drawdown.toFixed(1)}%`,  c: stats.drawdown > 10 ? "#ef4444" : stats.drawdown > 5 ? "#f59e0b" : "#10b981" },
+                        { l: "Pos. Abertas", v: String(stats.posicoes),           c: stats.posicoes > 0 ? "#3b82f6" : "var(--text-muted)" },
+                      ].map(({ l, v, c }) => (
+                        <div key={l} className="rounded-lg p-2 text-[10px]" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+                          <div style={{ color: "var(--text-muted)" }}>{l}</div>
+                          <div className="font-bold mt-0.5 tabular-nums" style={{ color: c }}>{v}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Tabela de trades */}
+                    {allTrades.length === 0 ? (
+                      <div className="px-3 py-4 text-[10px] text-center" style={{ color: "var(--text-muted)" }}>
+                        Nenhuma operação registrada ainda.
+                      </div>
+                    ) : (
+                      <div className="overflow-y-auto mt-2" style={{ maxHeight: 300 }}>
+                        <table className="w-full text-[10px]" style={{ borderCollapse: "collapse" }}>
+                          <thead>
+                            <tr style={{ background: "var(--bg-card)", borderBottom: "1px solid var(--border)", position: "sticky", top: 0 }}>
+                              {["Data", "Moeda", "Tipo", "Preço R$", "Valor R$", "P&L", "Motivo"].map(h => (
+                                <th key={h} className="px-2 py-1.5 text-left font-semibold whitespace-nowrap" style={{ color: "var(--text-muted)" }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {allTrades.map((t, i) => {
+                              const isOpen  = t.tipo === "C";
+                              const pnl     = t.pnl_brl ?? 0;
+                              const motivo  = isOpen ? (t.motivo_entrada ?? "—") : (t.motivo_saida ?? "—");
+                              const dt      = new Date(t.time);
+                              const hora    = `${dt.getDate().toString().padStart(2,"0")}/${(dt.getMonth()+1).toString().padStart(2,"0")} ${dt.getHours().toString().padStart(2,"0")}:${dt.getMinutes().toString().padStart(2,"0")}`;
+                              return (
+                                <tr key={t.id ?? i} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.012)" }}>
+                                  <td className="px-2 py-1.5 tabular-nums whitespace-nowrap" style={{ color: "var(--text-muted)" }}>{hora}</td>
+                                  <td className="px-2 py-1.5 font-bold" style={{ color: "var(--text-primary)" }}>
+                                    {COIN_EMO[t.simbolo] ?? "○"} {t.simbolo}
+                                  </td>
+                                  <td className="px-2 py-1.5">
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold" style={{
+                                      background: isOpen ? "rgba(59,130,246,0.15)" : "rgba(107,114,128,0.15)",
+                                      color:      isOpen ? "#60a5fa" : "#9ca3af",
+                                    }}>
+                                      {isOpen ? "ABRE" : "FECHA"}
+                                    </span>
+                                  </td>
+                                  <td className="px-2 py-1.5 tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                                    {t.price_brl.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}
+                                  </td>
+                                  <td className="px-2 py-1.5 tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                                    {t.amount_brl.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}
+                                  </td>
+                                  <td className="px-2 py-1.5 tabular-nums font-bold" style={{ color: isOpen ? "var(--text-muted)" : pnl >= 0 ? "#10b981" : "#ef4444" }}>
+                                    {isOpen ? "—" : `${pnl >= 0 ? "+" : ""}R$ ${Math.abs(pnl).toFixed(2)}`}
+                                  </td>
+                                  <td className="px-2 py-1.5" style={{ color: "var(--text-muted)", maxWidth: 130 }}>
+                                    <span title={motivo}>{motivo.slice(0, 28)}{motivo.length > 28 ? "…" : ""}</span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    <div className="px-3 py-2 border-t flex justify-end" style={{ borderColor: "var(--border)" }}>
+                      <button onClick={() => onReset(cfg.id)}
+                        className="text-[9px] px-2 py-1 rounded border transition-colors"
+                        style={{ borderColor: "rgba(239,68,68,0.3)", color: "#ef4444" }}>
+                        Zerar carteira
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Banco View ────────────────────────────────────────────────────────────────
+
 function BancoView({ banco, wallets, onSalvarTodos, onRemoverData }:
   { banco: BancoEntry[]; wallets: Record<string, SimWallet>; onSalvarTodos: () => void; onRemoverData: (d: string) => void }) {
   const [salvando, setSalvando]         = useState(false);
@@ -2914,7 +3139,7 @@ function CarteiraView({ wallet, cfg, onVender, onReset, onAtualizar, onSalvarBan
 
 export default function DayTradePage() {
   const [selected, setSelected]       = useState<string | null>(null);
-  const [view, setView]               = useState<"ranking" | "carteiras" | "comparativo" | "banco">("ranking");
+  const [view, setView]               = useState<"ranking" | "carteiras" | "comparativo" | "banco" | "historico">("ranking");
   const [autoTrade, setAutoTrade]     = useState(true);
   const [activePerfilId, setActivePerfilId] = useState("mod_normal");
   const [infoPerfilId, setInfoPerfilId]     = useState<string | null>(null);
@@ -3063,6 +3288,7 @@ export default function DayTradePage() {
         <div className="flex gap-2 mb-4 pt-2 flex-wrap">
           {TAB_BTN("ranking", "Ranking")}
           {TAB_BTN("carteiras", "Carteiras", totalPos)}
+          {TAB_BTN("historico", "Histórico")}
           {TAB_BTN("comparativo", "Comparativo")}
           {TAB_BTN("banco", "Banco", banco.length > 0 ? undefined : undefined)}
         </div>
@@ -3071,6 +3297,8 @@ export default function DayTradePage() {
       {selected ? (
         <DetailView simbolo={selected} onBack={() => setSelected(null)}
           wallet={activeWallet} onBuy={handleBuyDetail} onSell={handleSellDetail} />
+      ) : view === "historico" ? (
+        <HistoricoView wallets={wallets} onReset={resetPerfil} />
       ) : view === "banco" ? (
         <BancoView banco={banco} wallets={wallets} onSalvarTodos={handleSalvarTodos} onRemoverData={removerData} />
       ) : view === "comparativo" ? (
