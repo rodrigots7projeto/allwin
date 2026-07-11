@@ -72,6 +72,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[AVISO] Auto-trade worker nao iniciado ({e})")
 
+    # Bot worker — 30 bots operando futuros 24/7
+    try:
+        from .cripto.bot_worker import bot_trade_loop
+        asyncio.create_task(bot_trade_loop())
+        print("[OK] Bot worker iniciado (30 bots)")
+    except Exception as e:
+        print(f"[AVISO] Bot worker nao iniciado ({e})")
+
     yield
 
     from .db.session import engine

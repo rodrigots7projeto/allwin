@@ -78,6 +78,29 @@ interface FuturesBancoEntry {
   trades: FuturesTrade[];
 }
 
+// ── Bot Interfaces ────────────────────────────────────────────────────────────
+
+interface BotStrategy {
+  score_min: number; score_max?: number; grade_required?: string[];
+  direction: "LONG" | "SHORT" | "BOTH";
+  sl_pct: number; tp_pct: number; stake: number; max_positions: number;
+  require_ist_min?: number; require_funding_neg?: boolean;
+  require_oi_increase?: boolean; require_cvd_bullish?: boolean;
+  bull_pct_min?: number; bull_pct_max?: number; altcoin_only?: boolean;
+}
+interface BotProfile {
+  id: string; name: string; emoji: string; color: string;
+  tagline: string; strategy: BotStrategy; adaptive: boolean; capital: number;
+}
+interface BotLearned {
+  score_min_adj: number; stake_mult: number; generation: number; log: string[];
+}
+interface BotWallet {
+  saldo_inicial: number; saldo_livre: number;
+  positions: Record<string, FuturesPos>; trades: FuturesTrade[];
+  learned: BotLearned;
+}
+
 // ── Perfis Futures ────────────────────────────────────────────────────────────
 
 // Objetivo futuros: capturar 1-5% no ativo. Com alavancagem, isso vira 10-50%+ de retorno na margem.
@@ -176,6 +199,135 @@ const PERFIS_FUTURES: FuturesPerfilConfig[] = [
     aguardar_ok: true, capital_inicial: 100000, stake_base: 2000,
     direction_allowed: "BOTH",
     descricao: "Scalp: alvo 1.3% no ativo (SL 0.5%). Com 20x = +26% por trade. Score ≥ 30. Máximas entradas." },
+];
+
+// ── Bot Profiles (20 bots) ────────────────────────────────────────────────────
+
+const BOT_WALLET_KEY = "allwin_bot_wallets_v1";
+
+const BOT_PROFILES: BotProfile[] = [
+  { id:"bot_atlas",      name:"ATLAS",      emoji:"🏛️", color:"#3b82f6",
+    tagline:"Score alto · Grade A/A+ obrigatória",
+    strategy:{ score_min:72, grade_required:["A+","A"], direction:"BOTH", sl_pct:0.006, tp_pct:0.015, stake:2000, max_positions:3 },
+    adaptive:true, capital:100000 },
+  { id:"bot_zeus",       name:"ZEUS",       emoji:"⚡", color:"#f59e0b",
+    tagline:"Máxima agressividade · Qualquer grade",
+    strategy:{ score_min:40, direction:"BOTH", sl_pct:0.017, tp_pct:0.05, stake:1000, max_positions:5 },
+    adaptive:true, capital:100000 },
+  { id:"bot_orion",      name:"ORION",      emoji:"🎯", color:"#a855f7",
+    tagline:"Caçador Grade A+ · Score 55-85",
+    strategy:{ score_min:55, score_max:85, grade_required:["A+"], direction:"BOTH", sl_pct:0.010, tp_pct:0.030, stake:3000, max_positions:3 },
+    adaptive:true, capital:100000 },
+  { id:"bot_hermes",     name:"HERMES",     emoji:"💨", color:"#22d3ee",
+    tagline:"Scalp ultra-rápido · Muitos trades pequenos",
+    strategy:{ score_min:44, direction:"BOTH", sl_pct:0.003, tp_pct:0.008, stake:2000, max_positions:6 },
+    adaptive:true, capital:100000 },
+  { id:"bot_apollo",     name:"APOLLO",     emoji:"🌟", color:"#fbbf24",
+    tagline:"Momentum puro · IST mínimo 65",
+    strategy:{ score_min:55, require_ist_min:65, direction:"BOTH", sl_pct:0.009, tp_pct:0.025, stake:1500, max_positions:3 },
+    adaptive:true, capital:100000 },
+  { id:"bot_ares",       name:"ARES",       emoji:"⚔️", color:"#ef4444",
+    tagline:"Especialista SHORT · Caça quedas",
+    strategy:{ score_min:50, direction:"SHORT", sl_pct:0.010, tp_pct:0.025, stake:1500, max_positions:4 },
+    adaptive:true, capital:100000 },
+  { id:"bot_poseidon",   name:"POSEIDON",   emoji:"🌊", color:"#0ea5e9",
+    tagline:"Open Interest crescente · Segue o dinheiro",
+    strategy:{ score_min:50, require_oi_increase:true, direction:"BOTH", sl_pct:0.010, tp_pct:0.028, stake:2000, max_positions:3 },
+    adaptive:true, capital:100000 },
+  { id:"bot_hades",      name:"HADES",      emoji:"🔮", color:"#7c3aed",
+    tagline:"Contrário · Compra quando bull_pct < 35%",
+    strategy:{ score_min:45, bull_pct_max:35, direction:"LONG", sl_pct:0.012, tp_pct:0.030, stake:1000, max_positions:3 },
+    adaptive:true, capital:100000 },
+  { id:"bot_athena",     name:"ATHENA",     emoji:"🦉", color:"#10b981",
+    tagline:"Multi-fator · IST + Funding negativo",
+    strategy:{ score_min:58, require_ist_min:55, require_funding_neg:true, direction:"BOTH", sl_pct:0.008, tp_pct:0.022, stake:2000, max_positions:3 },
+    adaptive:true, capital:100000 },
+  { id:"bot_titan",      name:"TITAN",      emoji:"🪨", color:"#6b7280",
+    tagline:"Swing longo prazo · SL 2% / TP 6%",
+    strategy:{ score_min:65, direction:"BOTH", sl_pct:0.020, tp_pct:0.060, stake:5000, max_positions:2 },
+    adaptive:true, capital:100000 },
+  { id:"bot_kronos",     name:"KRONOS",     emoji:"⏰", color:"#84cc16",
+    tagline:"Timing perfeito · Score ≥ 72 fixo",
+    strategy:{ score_min:72, grade_required:["A+","A"], direction:"BOTH", sl_pct:0.007, tp_pct:0.020, stake:3000, max_positions:2 },
+    adaptive:false, capital:100000 },
+  { id:"bot_helios",     name:"HELIOS",     emoji:"🌅", color:"#f97316",
+    tagline:"LONG only · bull_pct ≥ 55%",
+    strategy:{ score_min:54, direction:"LONG", bull_pct_min:55, sl_pct:0.009, tp_pct:0.022, stake:1500, max_positions:4 },
+    adaptive:true, capital:100000 },
+  { id:"bot_artemis",    name:"ARTEMIS",    emoji:"🏹", color:"#22c55e",
+    tagline:"Altcoins only · Ignora BTC e ETH",
+    strategy:{ score_min:52, altcoin_only:true, direction:"BOTH", sl_pct:0.012, tp_pct:0.035, stake:1000, max_positions:4 },
+    adaptive:true, capital:100000 },
+  { id:"bot_hephaestus", name:"HEPHAESTUS",emoji:"🔨", color:"#d97706",
+    tagline:"Grade B+ · IST ≥ 60 · Fundamentos sólidos",
+    strategy:{ score_min:58, grade_required:["A+","A","B"], require_ist_min:60, direction:"BOTH", sl_pct:0.008, tp_pct:0.022, stake:2000, max_positions:3 },
+    adaptive:true, capital:100000 },
+  { id:"bot_dionysus",   name:"DIONYSUS",   emoji:"🍇", color:"#c084fc",
+    tagline:"Funding negativo · Taxas a favor",
+    strategy:{ score_min:48, require_funding_neg:true, direction:"LONG", sl_pct:0.008, tp_pct:0.020, stake:2000, max_positions:4 },
+    adaptive:true, capital:100000 },
+  { id:"bot_eros",       name:"EROS",       emoji:"💫", color:"#f472b6",
+    tagline:"CVD bullish · Compradores dominando",
+    strategy:{ score_min:50, require_cvd_bullish:true, direction:"LONG", sl_pct:0.009, tp_pct:0.024, stake:1500, max_positions:3 },
+    adaptive:true, capital:100000 },
+  { id:"bot_nike",       name:"NIKE",       emoji:"🏆", color:"#d97706",
+    tagline:"Alta probabilidade · Stake concentrado",
+    strategy:{ score_min:68, grade_required:["A+","A","B"], direction:"BOTH", sl_pct:0.006, tp_pct:0.018, stake:4000, max_positions:2 },
+    adaptive:false, capital:100000 },
+  { id:"bot_proteus",    name:"PROTEUS",    emoji:"🔄", color:"#06b6d4",
+    tagline:"Shapeshifter · Adapta tudo pelos resultados",
+    strategy:{ score_min:55, direction:"BOTH", sl_pct:0.010, tp_pct:0.025, stake:1500, max_positions:3 },
+    adaptive:true, capital:100000 },
+  { id:"bot_prometheus", name:"PROMETHEUS", emoji:"🔥", color:"#dc2626",
+    tagline:"Aprendiz veloz · Começa conservador e escala",
+    strategy:{ score_min:70, grade_required:["A+","A"], direction:"BOTH", sl_pct:0.008, tp_pct:0.020, stake:1000, max_positions:2 },
+    adaptive:true, capital:100000 },
+  { id:"bot_nemesis",    name:"NEMESIS",    emoji:"⚖️", color:"#78716c",
+    tagline:"Reversão · SHORT quando todos são bullish",
+    strategy:{ score_min:38, bull_pct_max:20, direction:"SHORT", sl_pct:0.013, tp_pct:0.040, stake:1000, max_positions:3 },
+    adaptive:true, capital:100000 },
+
+  // ── 10 Novos Bots Conservadores ───────────────────────────────────────────
+  { id:"bot_minerva",    name:"MINERVA",    emoji:"🦚", color:"#6366f1",
+    tagline:"Sabedoria total · Score + Grade A+ + IST alto",
+    strategy:{ score_min:76, grade_required:["A+"], require_ist_min:68, direction:"BOTH", sl_pct:0.005, tp_pct:0.013, stake:800, max_positions:2 },
+    adaptive:true, capital:100000 },
+  { id:"bot_jupiter",    name:"JUPITER",    emoji:"🔱", color:"#fbbf24",
+    tagline:"Rei absoluto · Score ≥ 80 · Setup perfeito ou nada",
+    strategy:{ score_min:80, grade_required:["A+"], require_ist_min:65, direction:"BOTH", sl_pct:0.004, tp_pct:0.010, stake:3000, max_positions:1 },
+    adaptive:false, capital:100000 },
+  { id:"bot_caesar",     name:"CAESAR",     emoji:"👑", color:"#dc2626",
+    tagline:"Imperador LONG · Alta dominância compradora",
+    strategy:{ score_min:75, grade_required:["A+","A"], direction:"LONG", bull_pct_min:58, sl_pct:0.005, tp_pct:0.013, stake:1000, max_positions:2 },
+    adaptive:true, capital:100000 },
+  { id:"bot_diana",      name:"DIANA",      emoji:"🌙", color:"#818cf8",
+    tagline:"Caçadora precisa · Grade A+ + IST elevado · só LONG",
+    strategy:{ score_min:74, grade_required:["A+"], require_ist_min:65, direction:"LONG", sl_pct:0.005, tp_pct:0.012, stake:600, max_positions:2 },
+    adaptive:true, capital:100000 },
+  { id:"bot_mercurio",   name:"MERCURIO",   emoji:"☿️", color:"#34d399",
+    tagline:"Scalp refinado · Rápido mas exige Grade A+/A",
+    strategy:{ score_min:65, grade_required:["A+","A"], direction:"BOTH", sl_pct:0.004, tp_pct:0.009, stake:1500, max_positions:3 },
+    adaptive:true, capital:100000 },
+  { id:"bot_vesta",      name:"VESTA",      emoji:"🕯️", color:"#f472b6",
+    tagline:"Chama sagrada · Funding negativo + bull_pct favorável",
+    strategy:{ score_min:72, require_funding_neg:true, bull_pct_min:52, direction:"LONG", sl_pct:0.006, tp_pct:0.015, stake:700, max_positions:2 },
+    adaptive:true, capital:100000 },
+  { id:"bot_marco",      name:"MARCO",      emoji:"📖", color:"#94a3b8",
+    tagline:"Estoicismo puro · Score + IST + Grade balanceados",
+    strategy:{ score_min:70, grade_required:["A+","A","B"], require_ist_min:62, direction:"BOTH", sl_pct:0.007, tp_pct:0.016, stake:500, max_positions:2 },
+    adaptive:true, capital:100000 },
+  { id:"bot_brutus",     name:"BRUTUS",     emoji:"🗡️", color:"#f87171",
+    tagline:"SHORT conservador · Só Grade A+ em quedas",
+    strategy:{ score_min:68, grade_required:["A+","A"], direction:"SHORT", sl_pct:0.005, tp_pct:0.014, stake:600, max_positions:2 },
+    adaptive:true, capital:100000 },
+  { id:"bot_seneca",     name:"SENECA",     emoji:"🎭", color:"#a78bfa",
+    tagline:"Filósofo conservador · Muitos filtros · Poucas entradas",
+    strategy:{ score_min:74, grade_required:["A+","A"], require_ist_min:62, require_funding_neg:true, direction:"BOTH", sl_pct:0.005, tp_pct:0.013, stake:600, max_positions:2 },
+    adaptive:true, capital:100000 },
+  { id:"bot_cicero",     name:"CICERO",     emoji:"🗣️", color:"#fb923c",
+    tagline:"Setup perfeito · Grade A+ + IST 70 + OI crescente",
+    strategy:{ score_min:77, grade_required:["A+"], require_ist_min:70, require_oi_increase:true, direction:"BOTH", sl_pct:0.004, tp_pct:0.010, stake:1000, max_positions:1 },
+    adaptive:true, capital:100000 },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -301,6 +453,265 @@ async function _syncWallet(perfilId: string, w: FuturesWallet) {
   } catch { /* silencioso */ }
 }
 
+// Migra localStorage → backend quando MySQL está vazio ou só tem carteiras padrão
+async function _pushFuturesLocalToBackend(localWallets: Record<string, FuturesWallet>) {
+  const temDados = Object.values(localWallets).some(
+    w => w.trades.length > 0 || Object.keys(w.positions).length > 0
+  );
+  if (!temDados) return;
+  try {
+    const payload = Object.fromEntries(
+      Object.entries(localWallets).map(([pid, w]) => [
+        pid, { saldo_inicial: w.saldo_inicial, saldo_livre: w.saldo_livre, positions: w.positions, trades: w.trades },
+      ])
+    );
+    await fetch(`${API}/cripto/wallets/futures/sync_all`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch { /* silencioso */ }
+}
+
+// ── Bot Engine ────────────────────────────────────────────────────────────────
+
+async function _syncBotTrade(trade: FuturesTrade, botId: string) {
+  try {
+    await fetch(`${API}/cripto/wallets/bot/trade`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...trade, perfil_id: botId }),
+    });
+  } catch {}
+}
+async function _syncBotWallet(botId: string, w: BotWallet) {
+  try {
+    await fetch(`${API}/cripto/wallets/bot/sync`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ perfil_id: botId, saldo_inicial: w.saldo_inicial, saldo_livre: w.saldo_livre, positions: w.positions, trades: [] }),
+    });
+  } catch {}
+}
+
+function emptyBotLearned(): BotLearned { return { score_min_adj: 0, stake_mult: 1, generation: 0, log: [] }; }
+function emptyBotWallet(cap: number): BotWallet {
+  return { saldo_inicial: cap, saldo_livre: cap, positions: {}, trades: [], learned: emptyBotLearned() };
+}
+function emptyAllBotWallets(): Record<string, BotWallet> {
+  return Object.fromEntries(BOT_PROFILES.map(b => [b.id, emptyBotWallet(b.capital)]));
+}
+
+function botCanEnter(bot: BotProfile, wallet: BotWallet, item: FuturesItem): "LONG" | "SHORT" | null {
+  const effMin = bot.strategy.score_min + (wallet.learned?.score_min_adj ?? 0);
+  if (item.score_final < effMin) return null;
+  if (bot.strategy.score_max && item.score_final > bot.strategy.score_max) return null;
+  if (item.direction === "NEUTRO") return null;
+  if (bot.strategy.grade_required && !bot.strategy.grade_required.includes(item.grade)) return null;
+  const dir = item.direction as "LONG" | "SHORT";
+  if (bot.strategy.direction !== "BOTH" && bot.strategy.direction !== dir) return null;
+  const effStake = bot.strategy.stake * (wallet.learned?.stake_mult ?? 1);
+  if (wallet.saldo_livre < Math.min(effStake, 50)) return null;
+  if (Object.keys(wallet.positions).length >= bot.strategy.max_positions) return null;
+  if (wallet.positions[item.simbolo]) return null;
+  if (bot.strategy.require_ist_min    && (item.ist          ?? 0)   < bot.strategy.require_ist_min) return null;
+  if (bot.strategy.require_funding_neg && (item.funding_rate  ?? 0)  >= 0) return null;
+  if (bot.strategy.require_oi_increase && (item.oi_change_pct ?? 0) <= 0) return null;
+  if (bot.strategy.require_cvd_bullish && !item.cvd_bullish) return null;
+  if (bot.strategy.bull_pct_min && (item.bull_pct ?? 50) < bot.strategy.bull_pct_min) return null;
+  if (bot.strategy.bull_pct_max && (item.bull_pct ?? 50) > bot.strategy.bull_pct_max) return null;
+  if (bot.strategy.altcoin_only && (item.simbolo === "BTC" || item.simbolo === "ETH")) return null;
+  return dir;
+}
+
+function applyBotLearning(bot: BotProfile, wallet: BotWallet): BotLearned {
+  if (!bot.adaptive) return wallet.learned ?? emptyBotLearned();
+  const vendas = wallet.trades.filter(t => t.tipo === "V");
+  if (vendas.length < 10) return wallet.learned ?? emptyBotLearned();
+  const newGen = Math.floor(vendas.length / 10);
+  if (newGen <= (wallet.learned?.generation ?? 0)) return wallet.learned;
+  const last10 = vendas.slice(-10);
+  const wr = last10.filter(t => (t.pnl_brl ?? 0) > 0).length / 10;
+  let adj  = wallet.learned?.score_min_adj ?? 0;
+  let mult = wallet.learned?.stake_mult    ?? 1;
+  const log = [...(wallet.learned?.log ?? [])];
+  if (wr < 0.40) {
+    adj = Math.min(adj + 2, 20); mult = Math.max(0.5, +(mult * 0.95).toFixed(3));
+    log.push(`Gen ${newGen}: WR ${(wr*100).toFixed(0)}% → score +2, stake -5%`);
+  } else if (wr >= 0.65) {
+    adj = Math.max(adj - 1, -10); mult = Math.min(2.0, +(mult * 1.05).toFixed(3));
+    log.push(`Gen ${newGen}: WR ${(wr*100).toFixed(0)}% → score -1, stake +5%`);
+  } else {
+    log.push(`Gen ${newGen}: WR ${(wr*100).toFixed(0)}% → sem ajuste`);
+  }
+  if (log.length > 12) log.splice(0, log.length - 12);
+  return { score_min_adj: adj, stake_mult: mult, generation: newGen, log };
+}
+
+function runBotCycle(bot: BotProfile, wallet: BotWallet, scan: FuturesScanData): { wallet: BotWallet; newTrades: FuturesTrade[] } {
+  const usdBrl = scan.usd_brl ?? 5.2;
+  const items  = scan.geral  ?? [];
+  let w: BotWallet = { ...wallet, positions: { ...wallet.positions }, trades: [...wallet.trades], learned: wallet.learned ?? emptyBotLearned() };
+  const newTrades: FuturesTrade[] = [];
+
+  // 1) SL / TP check on open positions
+  for (const sym of Object.keys(w.positions)) {
+    const pos  = w.positions[sym];
+    const item = items.find(i => i.simbolo === sym);
+    if (!item?.preco) continue;
+    const curr = item.preco * usdBrl;
+    let motivo: string | null = null;
+    if (pos.direction === "LONG") {
+      if (pos.stop_loss_price   && curr <= pos.stop_loss_price)  motivo = `Stop Loss ${(bot.strategy.sl_pct*100).toFixed(1)}%`;
+      else if (pos.take_profit_price && curr >= pos.take_profit_price) motivo = `Take Profit ${(bot.strategy.tp_pct*100).toFixed(1)}%`;
+      else if (item.direction === "SHORT" && item.score_final > 65) motivo = "Reversão SHORT";
+    } else {
+      if (pos.stop_loss_price   && curr >= pos.stop_loss_price)  motivo = `Stop Loss ${(bot.strategy.sl_pct*100).toFixed(1)}%`;
+      else if (pos.take_profit_price && curr <= pos.take_profit_price) motivo = `Take Profit ${(bot.strategy.tp_pct*100).toFixed(1)}%`;
+      else if (item.direction === "LONG" && item.score_final > 65) motivo = "Reversão LONG";
+    }
+    if (motivo) {
+      const sv  = pos.units * curr;
+      const pnl = pos.direction === "LONG" ? sv - pos.amount_brl : pos.amount_brl - sv;
+      const trade: FuturesTrade = {
+        id: `${Date.now()}-${bot.id}-${sym}-V`, simbolo: sym, tipo: "V",
+        direction: pos.direction, price_brl: curr, amount_brl: sv,
+        pnl_brl: pnl, pct: (pnl / pos.amount_brl) * 100,
+        time: Date.now(), score: item.score_final, auto: true, motivo_saida: motivo,
+      };
+      const { [sym]: _r, ...rest } = w.positions;
+      w = { ...w, saldo_livre: w.saldo_livre + pos.amount_brl + pnl, positions: rest, trades: [...w.trades, trade] };
+      newTrades.push(trade);
+    }
+  }
+
+  // 2) New entries — limit 1 new position per cycle
+  let newEntriesThisCycle = 0;
+  for (const item of items) {
+    if (!item.preco || newEntriesThisCycle >= 1) break;
+    const dir = botCanEnter(bot, w, item);
+    if (!dir) continue;
+    const effStake = bot.strategy.stake * (w.learned?.stake_mult ?? 1);
+    const amount   = Math.min(effStake, w.saldo_livre);
+    if (amount < 50) continue;
+    const pBrl  = item.preco * usdBrl;
+    const fee   = amount * 0.0004;
+    const units = (amount - fee) / pBrl;
+    const sl = dir === "LONG" ? pBrl * (1 - bot.strategy.sl_pct) : pBrl * (1 + bot.strategy.sl_pct);
+    const tp = dir === "LONG" ? pBrl * (1 + bot.strategy.tp_pct) : pBrl * (1 - bot.strategy.tp_pct);
+    const pos: FuturesPos = {
+      simbolo: item.simbolo, direction: dir, units, amount_brl: amount,
+      entry_price_brl: pBrl, last_price_brl: pBrl, last_usd_brl: usdBrl,
+      time: Date.now(), score_entry: item.score_final,
+      stop_loss_price: sl, take_profit_price: tp, sl_pct: bot.strategy.sl_pct, tp_pct: bot.strategy.tp_pct,
+    };
+    const trade: FuturesTrade = {
+      id: `${Date.now()}-${bot.id}-${item.simbolo}-C`, simbolo: item.simbolo, tipo: "C",
+      direction: dir, price_brl: pBrl, amount_brl: amount, fee,
+      time: Date.now(), score: item.score_final, auto: true, grade: item.grade,
+      motivo_entrada: `${bot.name}: Score ${item.score_final.toFixed(0)} | ${dir} | ${bot.tagline}`,
+    };
+    w = { ...w, saldo_livre: w.saldo_livre - amount, positions: { ...w.positions, [item.simbolo]: pos }, trades: [...w.trades, trade] };
+    newTrades.push(trade);
+    newEntriesThisCycle++;
+  }
+
+  // 3) Apply learning
+  const learned = applyBotLearning(bot, w);
+  return { wallet: { ...w, learned }, newTrades };
+}
+
+function useBotWallets(scan: FuturesScanData | null) {
+  const [botWallets, setBotWallets] = useState<Record<string, BotWallet>>(() => {
+    try {
+      const s = localStorage.getItem(BOT_WALLET_KEY);
+      if (s) { const p = JSON.parse(s); return { ...emptyAllBotWallets(), ...p }; }
+    } catch {}
+    return emptyAllBotWallets();
+  });
+
+  // Carrega wallets do MySQL no mount — backend opera 24/7 mesmo com browser fechado
+  useEffect(() => {
+    fetch(`${API}/cripto/wallets/bot`)
+      .then(r => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data || Object.keys(data).length === 0) return;
+        const temDadosReais = Object.values(data).some(
+          (w: any) => (Array.isArray(w.trades) && w.trades.length > 0) ||
+            Object.keys((w.positions as Record<string, unknown>) ?? {}).filter(k => k !== "_learned").length > 0
+        );
+        if (!temDadosReais) return;
+        const merged = emptyAllBotWallets();
+        for (const [bid, w] of Object.entries(data as Record<string, any>)) {
+          if (!merged[bid]) continue;
+          const learnedRaw = (w.positions as any)?._learned;
+          const learned: BotLearned = learnedRaw
+            ? { score_min_adj: learnedRaw.score_min_adj ?? 0, stake_mult: learnedRaw.stake_mult ?? 1, generation: learnedRaw.trades_avaliados ? Math.floor(learnedRaw.trades_avaliados / 10) : 0, log: [] }
+            : emptyBotLearned();
+          const positions = Object.fromEntries(Object.entries(w.positions ?? {}).filter(([k]) => k !== "_learned")) as Record<string, FuturesPos>;
+          merged[bid] = {
+            ...merged[bid],
+            saldo_livre: w.saldo_livre ?? merged[bid].saldo_livre,
+            positions,
+            trades: Array.isArray(w.trades) ? w.trades : [],
+            learned,
+          };
+        }
+        setBotWallets(merged);
+        try { localStorage.setItem(BOT_WALLET_KEY, JSON.stringify(merged)); } catch {}
+      }).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const lastScanTs = useRef<number>(0);
+
+  useEffect(() => {
+    if (!scan?.geral?.length) return;
+    const ts = scan.atualizado ?? 0;
+    if (ts && ts <= lastScanTs.current) return;
+    lastScanTs.current = ts || Date.now();
+
+    setBotWallets(prev => {
+      const next = { ...prev };
+      for (const bot of BOT_PROFILES) {
+        const wallet = next[bot.id] ?? emptyBotWallet(bot.capital);
+        const { wallet: newW, newTrades } = runBotCycle(bot, wallet, scan);
+        // Update last_price on existing positions
+        const updPos = { ...newW.positions };
+        for (const item of scan.geral) {
+          if (updPos[item.simbolo] && item.preco) {
+            updPos[item.simbolo] = { ...updPos[item.simbolo], last_price_brl: item.preco * (scan.usd_brl ?? 5.2), last_usd_brl: scan.usd_brl ?? 5.2 };
+          }
+        }
+        const finalW = { ...newW, positions: updPos };
+        next[bot.id] = finalW;
+        if (newTrades.length > 0) {
+          newTrades.forEach(t => _syncBotTrade(t, bot.id));
+          _syncBotWallet(bot.id, finalW);
+        }
+      }
+      try { localStorage.setItem(BOT_WALLET_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, [scan]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const resetBot = useCallback((botId: string) => {
+    const bot = BOT_PROFILES.find(b => b.id === botId);
+    if (!bot) return;
+    setBotWallets(prev => {
+      const next = { ...prev, [botId]: emptyBotWallet(bot.capital) };
+      try { localStorage.setItem(BOT_WALLET_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+    fetch(`${API}/cripto/wallets/bot/${botId}?saldo_inicial=${bot.capital}`, { method: "DELETE" }).catch(() => {});
+  }, []);
+
+  const resetAllBots = useCallback(() => {
+    const w = emptyAllBotWallets();
+    setBotWallets(w);
+    try { localStorage.setItem(BOT_WALLET_KEY, JSON.stringify(w)); } catch {}
+  }, []);
+
+  return { botWallets, resetBot, resetAllBots };
+}
+
 function useFuturesWallet() {
   const [wallets, setWallets] = useState<Record<string, FuturesWallet>>(() => {
     try {
@@ -310,12 +721,31 @@ function useFuturesWallet() {
     return emptyMultiFutures();
   });
 
-  // Carrega do backend na montagem — sobrescreve localStorage com dado persistido
+  // Carrega do backend na montagem
+  // Se backend tem dados reais → usa backend (source of truth)
+  // Se backend vazio ou só padrão → mantém localStorage e migra para backend
   useEffect(() => {
+    const localSnapshot = wallets; // snapshot do localStorage capturado no useState
     fetch(`${API}/cripto/wallets/futures`)
       .then(r => r.ok ? r.json() : null)
       .then((data: Record<string, FuturesWallet> | null) => {
-        if (!data || Object.keys(data).length === 0) return;
+        if (!data || Object.keys(data).length === 0) {
+          // Backend vazio → migrar localStorage para backend
+          _pushFuturesLocalToBackend(localSnapshot);
+          return;
+        }
+        // Verificar se backend tem dados reais (trades ou posições abertas)
+        const temDadosReais = Object.values(data).some(
+          (w: FuturesWallet) => (Array.isArray(w.trades) && w.trades.length > 0) ||
+            Object.keys((w.positions as Record<string, unknown>) ?? {}).length > 0
+        );
+        if (!temDadosReais) {
+          // Backend só tem carteiras padrão zeradas (worker inicializou sem trades)
+          // → manter localStorage e migrar dados reais para backend
+          _pushFuturesLocalToBackend(localSnapshot);
+          return;
+        }
+        // Backend tem trades/posições reais → usar como source of truth
         const merged = { ...emptyMultiFutures() };
         for (const [pid, w] of Object.entries(data)) {
           if (merged[pid]) {
@@ -331,7 +761,7 @@ function useFuturesWallet() {
         try { localStorage.setItem(FUT_WALLET_KEY, JSON.stringify(merged)); } catch {}
       })
       .catch(() => { /* usa localStorage */ });
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const persist = (next: Record<string, FuturesWallet>) => {
     try { localStorage.setItem(FUT_WALLET_KEY, JSON.stringify(next)); } catch {}
@@ -987,6 +1417,369 @@ function FuturesBancoView({ banco, onSalvarTodos, onRemoverData }: { banco: Futu
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── Bot UI ────────────────────────────────────────────────────────────────────
+
+function calcBotStats(w: BotWallet) { return calcFuturesStats(w as unknown as FuturesWallet); }
+
+function BotCard({ bot, wallet, rank, onSelect }: {
+  bot: BotProfile; wallet: BotWallet; rank: number; onSelect: () => void;
+}) {
+  const stats    = calcBotStats(wallet);
+  const nPos     = Object.keys(wallet.positions).length;
+  const effMin   = bot.strategy.score_min + (wallet.learned?.score_min_adj ?? 0);
+  const stakeEff = Math.round(bot.strategy.stake * (wallet.learned?.stake_mult ?? 1));
+  const gen      = wallet.learned?.generation ?? 0;
+
+  return (
+    <div onClick={onSelect} className="relative rounded-xl border bg-[var(--bg-card)] p-4 cursor-pointer hover:shadow-lg transition-all"
+      style={{ borderColor: nPos > 0 ? bot.color + "60" : "var(--border)" }}>
+      {rank === 1 && stats.ops > 0 && (
+        <div className="absolute -top-2.5 -right-2.5 z-10 px-2 py-0.5 rounded-full text-[9px] font-black bg-amber-400 text-black">
+          #1
+        </div>
+      )}
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-2xl">{bot.emoji}</span>
+          <div>
+            <div className="font-black text-sm leading-none" style={{ color: bot.color }}>{bot.name}</div>
+            <div className="text-[10px] text-[var(--text-secondary)] mt-0.5 max-w-[130px] line-clamp-1">{bot.tagline}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {nPos > 0 && <span className="w-2 h-2 rounded-full animate-pulse" style={{ background: bot.color }} />}
+          <span className="text-[9px] font-bold" style={{ color: nPos > 0 ? bot.color : "#6b7280" }}>
+            {nPos > 0 ? `${nPos}POS` : "WAIT"}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 mb-3">
+        <div>
+          <div className="text-[9px] text-[var(--text-secondary)]">ROI</div>
+          <div className="font-black text-sm leading-none" style={{ color: stats.roi >= 0 ? "#10b981" : "#ef4444" }}>
+            {stats.roi >= 0 ? "+" : ""}{stats.roi.toFixed(2)}%
+          </div>
+        </div>
+        <div>
+          <div className="text-[9px] text-[var(--text-secondary)]">Win Rate</div>
+          <div className="font-bold text-sm leading-none" style={{ color: stats.win_rate >= 50 ? "#10b981" : "#ef4444" }}>
+            {stats.ops > 0 ? `${stats.win_rate.toFixed(0)}%` : "—"}
+          </div>
+        </div>
+        <div>
+          <div className="text-[9px] text-[var(--text-secondary)]">P&L</div>
+          <div className="font-semibold text-xs leading-none" style={{ color: stats.pnl >= 0 ? "#10b981" : "#ef4444" }}>
+            {stats.pnl >= 0 ? "+" : ""}R${fmt(Math.abs(stats.pnl), 0)}
+          </div>
+        </div>
+        <div>
+          <div className="text-[9px] text-[var(--text-secondary)]">Trades</div>
+          <div className="font-bold text-xs leading-none">{stats.ops}</div>
+        </div>
+      </div>
+
+      {gen > 0 && (
+        <div className="px-2 py-1 rounded-lg mb-2 text-[9px] font-semibold" style={{ background: bot.color + "18", color: bot.color }}>
+          Gen {gen} · Score ≥{effMin} · R${stakeEff.toLocaleString("pt-BR")} stake
+        </div>
+      )}
+
+      <div className="flex items-center justify-between text-[9px] text-[var(--text-secondary)]">
+        <span>SL {(bot.strategy.sl_pct*100).toFixed(1)}% / TP {(bot.strategy.tp_pct*100).toFixed(1)}%</span>
+        <span className="font-bold" style={{ color: bot.strategy.direction === "LONG" ? "#10b981" : bot.strategy.direction === "SHORT" ? "#ef4444" : "#a855f7" }}>
+          {bot.strategy.direction}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function BotDetailView({ bot, wallet, onBack, onReset }: {
+  bot: BotProfile; wallet: BotWallet; onBack: () => void; onReset: () => void;
+}) {
+  const stats     = calcBotStats(wallet);
+  const positions = Object.values(wallet.positions);
+  const vendas    = wallet.trades.filter(t => t.tipo === "V");
+  const effMin    = bot.strategy.score_min + (wallet.learned?.score_min_adj ?? 0);
+  const stakeEff  = Math.round(bot.strategy.stake * (wallet.learned?.stake_mult ?? 1));
+  const totalBrl  = wallet.saldo_livre + positions.reduce((a, p) => a + p.amount_brl, 0);
+  const pnlTotal  = totalBrl - wallet.saldo_inicial;
+  const pctTotal  = wallet.saldo_inicial > 0 ? (pnlTotal / wallet.saldo_inicial) * 100 : 0;
+  const gen       = wallet.learned?.generation ?? 0;
+
+  const filters: { label: string; color: string }[] = [
+    { label: bot.strategy.direction, color: bot.strategy.direction === "LONG" ? "#10b981" : bot.strategy.direction === "SHORT" ? "#ef4444" : "#a855f7" },
+    { label: `Score ≥ ${effMin}`, color: bot.color },
+    ...(bot.strategy.score_max ? [{ label: `Score ≤ ${bot.strategy.score_max}`, color: bot.color }] : []),
+    { label: `SL ${(bot.strategy.sl_pct*100).toFixed(1)}% / TP ${(bot.strategy.tp_pct*100).toFixed(1)}%`, color: "#6b7280" },
+    { label: `Stake R$${stakeEff.toLocaleString("pt-BR")}`, color: "#6b7280" },
+    { label: `Max ${bot.strategy.max_positions} pos`, color: "#6b7280" },
+    ...(bot.adaptive ? [{ label: "ADAPTATIVO 🧠", color: "#a855f7" }] : []),
+    ...(bot.strategy.grade_required ? [{ label: `Grade: ${bot.strategy.grade_required.join("/")}`, color: "#f59e0b" }] : []),
+    ...(bot.strategy.require_ist_min ? [{ label: `IST ≥ ${bot.strategy.require_ist_min}`, color: "#3b82f6" }] : []),
+    ...(bot.strategy.require_funding_neg ? [{ label: "Funding NEG", color: "#10b981" }] : []),
+    ...(bot.strategy.require_oi_increase ? [{ label: "OI ↑", color: "#f97316" }] : []),
+    ...(bot.strategy.require_cvd_bullish ? [{ label: "CVD Bullish", color: "#22c55e" }] : []),
+    ...(bot.strategy.bull_pct_min ? [{ label: `Bull ≥ ${bot.strategy.bull_pct_min}%`, color: "#10b981" }] : []),
+    ...(bot.strategy.bull_pct_max ? [{ label: `Bull ≤ ${bot.strategy.bull_pct_max}%`, color: "#ef4444" }] : []),
+    ...(bot.strategy.altcoin_only ? [{ label: "Altcoin only", color: "#8b5cf6" }] : []),
+  ];
+
+  return (
+    <div className="space-y-4">
+      <button onClick={onBack} className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+        ← Todos os Bots
+      </button>
+
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-4xl shrink-0"
+            style={{ background: bot.color + "15", border: `2px solid ${bot.color}40` }}>
+            {bot.emoji}
+          </div>
+          <div>
+            <div className="text-2xl font-black" style={{ color: bot.color }}>{bot.name}</div>
+            <div className="text-sm text-[var(--text-secondary)]">{bot.tagline}</div>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {filters.map(({ label, color }, i) => (
+                <span key={i} className="px-2 py-0.5 rounded-full text-[9px] font-semibold" style={{ background: color + "18", color }}>
+                  {label}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap items-start">
+          {gen > 0 && (
+            <div className="px-3 py-1.5 rounded-lg text-xs font-bold" style={{ background: bot.color + "20", color: bot.color }}>
+              Geração {gen}
+            </div>
+          )}
+          <button onClick={onReset} className="px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 text-xs hover:bg-red-500/10 transition-colors">
+            Resetar Bot
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: "Capital Total", val: `R$ ${fmt(totalBrl, 0)}`, cor: "var(--text-primary)" },
+          { label: "P&L", val: `${pnlTotal >= 0 ? "+" : ""}R$ ${fmt(Math.abs(pnlTotal), 0)}`, cor: pnlTotal >= 0 ? "#10b981" : "#ef4444", sub: `${pctTotal >= 0 ? "+" : ""}${pctTotal.toFixed(2)}%` },
+          { label: "Win Rate", val: stats.ops > 0 ? `${stats.win_rate.toFixed(0)}%` : "—", cor: stats.win_rate >= 50 ? "#10b981" : "#ef4444", sub: `${vendas.length} fechadas` },
+          { label: "Profit Factor", val: stats.ops > 0 ? (stats.profit_factor === 999 ? "∞" : stats.profit_factor.toFixed(2)) : "—", cor: stats.profit_factor >= 1 ? "#10b981" : "#ef4444" },
+        ].map(({ label, val, cor, sub }) => (
+          <div key={label} className="p-3 rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+            <div className="text-[10px] text-[var(--text-secondary)] mb-1">{label}</div>
+            <div className="font-black text-base leading-tight" style={{ color: cor }}>{val}</div>
+            {sub && <div className="text-[10px] font-semibold mt-0.5" style={{ color: cor }}>{sub}</div>}
+          </div>
+        ))}
+      </div>
+
+      {wallet.learned?.log?.length > 0 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-4">
+          <div className="font-semibold text-sm mb-3 flex items-center gap-2">
+            🧠 Log de Aprendizado
+            <span className="text-[10px] font-normal text-[var(--text-secondary)]">
+              Score min atual: {effMin} · Stake mult: {(wallet.learned.stake_mult ?? 1).toFixed(2)}x
+            </span>
+          </div>
+          <div className="space-y-1">
+            {[...wallet.learned.log].reverse().map((entry, i) => (
+              <div key={i} className="text-[11px] text-[var(--text-secondary)] flex items-center gap-2">
+                <span style={{ color: bot.color }}>▸</span>{entry}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {positions.length > 0 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+          <div className="px-4 py-3 border-b border-[var(--border)] font-semibold text-sm">
+            Posições Abertas ({positions.length})
+          </div>
+          <div className="divide-y divide-[var(--border)]">
+            {positions.map(p => {
+              const curr = p.last_price_brl;
+              const pnl  = p.direction === "LONG" ? (curr - p.entry_price_brl) * p.units : (p.entry_price_brl - curr) * p.units;
+              const pct  = (pnl / p.amount_brl) * 100;
+              const dc   = directionColor(p.direction);
+              return (
+                <div key={p.simbolo} className="flex items-center gap-3 px-4 py-3">
+                  <span className="text-xl">{COIN_EMOJI[p.simbolo] ?? p.simbolo[0]}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold">{p.simbolo}</span>
+                      <span className="text-[8px] font-black px-1.5 py-0.5 rounded" style={{ background: dc + "20", color: dc }}>{p.direction}</span>
+                    </div>
+                    <div className="text-[10px] text-[var(--text-secondary)]">
+                      Entrada R$ {fmt(p.entry_price_brl, 2)} · SL {fmt(p.stop_loss_price ?? 0, 2)} · TP {fmt(p.take_profit_price ?? 0, 2)}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className={`font-bold text-sm ${pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {pnl >= 0 ? "+" : ""}R${fmt(Math.abs(pnl), 0)}
+                    </div>
+                    <div className={`text-[10px] ${pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {vendas.length > 0 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+          <div className="px-4 py-3 border-b border-[var(--border)] font-semibold text-sm">
+            Histórico ({vendas.length} operações)
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full" style={{ fontSize: "11px" }}>
+              <thead>
+                <tr className="bg-[var(--bg)] border-b border-[var(--border)] text-[var(--text-secondary)] text-[9px] uppercase">
+                  <th className="px-3 py-2 text-left">Ativo</th>
+                  <th className="px-3 py-2 text-center">Dir</th>
+                  <th className="px-3 py-2 text-right">P&L</th>
+                  <th className="px-3 py-2 text-right">%</th>
+                  <th className="px-3 py-2 text-right">Status</th>
+                  <th className="px-3 py-2 text-left">Motivo saída</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...vendas].reverse().slice(0, 60).map((t, i) => {
+                  const pnl = t.pnl_brl ?? 0;
+                  return (
+                    <tr key={t.id} className={`border-b border-[var(--border)]/30 ${i % 2 === 0 ? "" : "bg-[var(--bg)]/40"}`}>
+                      <td className="px-3 py-2 font-bold">{t.simbolo}</td>
+                      <td className="px-3 py-2 text-center"><DirectionBadge dir={t.direction} /></td>
+                      <td className="px-3 py-2 text-right font-bold" style={{ color: pnl >= 0 ? "#10b981" : "#ef4444" }}>
+                        {pnl >= 0 ? "+" : ""}R${fmt(Math.abs(pnl), 0)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-bold" style={{ color: (t.pct ?? 0) >= 0 ? "#10b981" : "#ef4444" }}>
+                        {(t.pct ?? 0) >= 0 ? "+" : ""}{(t.pct ?? 0).toFixed(2)}%
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {pnl >= 0
+                          ? <span className="text-[8px] font-bold text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded">WIN</span>
+                          : <span className="text-[8px] font-bold text-red-400 bg-red-400/10 px-1.5 py-0.5 rounded">LOSS</span>}
+                      </td>
+                      <td className="px-3 py-2 text-[9px] text-[var(--text-secondary)] max-w-[120px] truncate">{t.motivo_saida}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {vendas.length === 0 && positions.length === 0 && (
+        <div className="text-center py-12 text-[var(--text-secondary)] text-sm">
+          {bot.name} aguardando sinais que correspondam à sua estratégia...
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BotTabView({ botWallets, scan, onResetBot, onResetAll }: {
+  botWallets: Record<string, BotWallet>;
+  scan: FuturesScanData | null;
+  onResetBot: (id: string) => void;
+  onResetAll: () => void;
+}) {
+  const [selectedBot, setSelectedBot] = useState<string | null>(null);
+
+  const totalInicial = BOT_PROFILES.reduce((a, b) => a + b.capital, 0);
+  const totalCapital = BOT_PROFILES.reduce((a, b) => {
+    const w = botWallets[b.id];
+    return a + (w ? w.saldo_livre + Object.values(w.positions).reduce((s, p) => s + p.amount_brl, 0) : b.capital);
+  }, 0);
+  const totalPnl   = totalCapital - totalInicial;
+  const totalRoi   = (totalPnl / totalInicial) * 100;
+  const totalOps   = BOT_PROFILES.reduce((a, b) => a + (botWallets[b.id]?.trades.filter(t => t.tipo === "V").length ?? 0), 0);
+  const totalAtivos = BOT_PROFILES.filter(b => Object.keys(botWallets[b.id]?.positions ?? {}).length > 0).length;
+  const totalWins  = BOT_PROFILES.reduce((a, b) => a + (botWallets[b.id]?.trades.filter(t => t.tipo === "V" && (t.pnl_brl ?? 0) > 0).length ?? 0), 0);
+  const globalWR   = totalOps > 0 ? totalWins / totalOps * 100 : 0;
+
+  if (selectedBot) {
+    const bot    = BOT_PROFILES.find(b => b.id === selectedBot);
+    const wallet = botWallets[selectedBot];
+    if (bot && wallet) {
+      return (
+        <BotDetailView
+          bot={bot} wallet={wallet}
+          onBack={() => setSelectedBot(null)}
+          onReset={() => { onResetBot(selectedBot); setSelectedBot(null); }}
+        />
+      );
+    }
+  }
+
+  // Rank bots by ROI (highest first)
+  const ranked = [...BOT_PROFILES].sort((a, b) => {
+    const ra = botWallets[a.id] ? calcBotStats(botWallets[a.id]).roi : 0;
+    const rb = botWallets[b.id] ? calcBotStats(botWallets[b.id]).roi : 0;
+    return rb - ra;
+  });
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-xl font-black text-[var(--text-primary)]">🤖 Bots Futuros</h2>
+          <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+            {BOT_PROFILES.length} bots independentes · Estratégias únicas · Aprendem com resultados · Clique para detalhes
+          </p>
+        </div>
+        <button onClick={onResetAll} className="px-3 py-1.5 rounded-lg border border-red-500/30 text-red-400 text-xs hover:bg-red-500/10 transition-colors">
+          Resetar Todos
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {[
+          { label: "Capital Total",  val: `R$ ${fmt(totalCapital,0)}`,                             cor: "var(--text-primary)" },
+          { label: "P&L Portfolio",  val: `${totalPnl>=0?"+":""}R$ ${fmt(Math.abs(totalPnl),0)}`, cor: totalPnl>=0?"#10b981":"#ef4444", sub: `${totalRoi>=0?"+":""}${totalRoi.toFixed(2)}%` },
+          { label: "Bots Ativos",    val: `${totalAtivos}/${BOT_PROFILES.length}`,                  cor: "#f59e0b" },
+          { label: "Total Trades",   val: String(totalOps),                                        cor: "#6b7280" },
+          { label: "Win Rate Global",val: totalOps>0 ? `${globalWR.toFixed(0)}%` : "—",           cor: globalWR>=50?"#10b981":"#ef4444" },
+          { label: "Último Scan",    val: scan ? new Date((scan.atualizado??0)*1000).toLocaleTimeString("pt-BR") : "—", cor: "#6b7280" },
+        ].map(({ label, val, cor, sub }) => (
+          <div key={label} className="p-3 rounded-xl border border-[var(--border)] bg-[var(--bg-card)]">
+            <div className="text-[10px] text-[var(--text-secondary)] mb-1">{label}</div>
+            <div className="font-black text-sm leading-tight" style={{ color: cor }}>{val}</div>
+            {sub && <div className="text-[10px] font-semibold mt-0.5" style={{ color: cor }}>{sub}</div>}
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+        {ranked.map((bot, idx) => (
+          <BotCard
+            key={bot.id}
+            bot={bot}
+            wallet={botWallets[bot.id] ?? emptyBotWallet(bot.capital)}
+            rank={idx + 1}
+            onSelect={() => setSelectedBot(bot.id)}
+          />
+        ))}
+      </div>
+
+      {!scan && (
+        <div className="text-center py-12 text-[var(--text-secondary)] text-sm">
+          Aguardando scan de futuros para os bots avaliarem o mercado...
+        </div>
+      )}
     </div>
   );
 }
@@ -2206,7 +2999,7 @@ function FuturesScalpView({
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function FuturesPage() {
-  const [view, setView]             = useState<"ranking" | "carteiras" | "comparativo" | "banco" | "ia" | "scalp">("ranking");
+  const [view, setView]             = useState<"ranking" | "carteiras" | "comparativo" | "banco" | "ia" | "scalp" | "bots">("ranking");
   const [autoTrade, setAutoTrade]   = useState(true);
   const [activePerfilId, setActivePerfilId] = useState("f_mod_normal");
   const [scan, setScan]             = useState<FuturesScanData | null>(null);
@@ -2215,6 +3008,7 @@ export default function FuturesPage() {
 
   const { wallets, abrirFutures, fecharFutures, atualizarTodos, resetPerfil, resetAll } = useFuturesWallet();
   const { banco, salvar: salvarBanco, removerData }                                      = useFuturesBanco();
+  const { botWallets, resetBot, resetAllBots }                                           = useBotWallets(scan);
 
   const walletsRef       = useRef(wallets);
   const abrirRef         = useRef(abrirFutures);
@@ -2434,10 +3228,21 @@ export default function FuturesPage() {
         <TabBtn v="ranking"     label="Ranking"     icon="📊" />
         <TabBtn v="carteiras"   label="Carteiras"   icon="💼" />
         <TabBtn v="scalp"       label="Scalp"       icon="⚡" />
+        <TabBtn v="bots"        label="Bots"        icon="🤖" />
         <TabBtn v="ia"          label="IA Análise"  icon="🧠" />
         <TabBtn v="comparativo" label="Comparativo" icon="⚖️" />
         <TabBtn v="banco"       label="Banco"       icon="🗄️" />
       </div>
+
+      {/* Bots */}
+      {view === "bots" && (
+        <BotTabView
+          botWallets={botWallets}
+          scan={scan}
+          onResetBot={resetBot}
+          onResetAll={resetAllBots}
+        />
+      )}
 
       {/* Ranking */}
       {view === "ranking" && <FuturesRankingView scan={scan} btcDom={btcDom} />}
