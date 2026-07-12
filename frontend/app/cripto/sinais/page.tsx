@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer,
   Tooltip,
@@ -124,7 +124,47 @@ interface RankItem {
   rr: string;
 }
 
+// ── Histórico de entradas IA ──────────────────────────────────────────────────
+
+interface HistItem {
+  id: string;
+  simbolo: string;
+  decisao: string;
+  score: number;
+  preco_entrada: number;
+  sl: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  rr1: string;
+  registrado_em: string;
+  preco_atual?: number;
+  verificado_em?: string;
+  status: "aberto" | "tp1" | "tp2" | "tp3" | "sl" | "expirado";
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+const HIST_KEY = "allwin_sinais_hist";
+function loadHist(): HistItem[] {
+  if (typeof window === "undefined") return [];
+  try { return JSON.parse(localStorage.getItem(HIST_KEY) ?? "[]"); } catch { return []; }
+}
+function saveHist(items: HistItem[]) {
+  try { localStorage.setItem(HIST_KEY, JSON.stringify(items)); } catch {}
+}
+
+function calcStatus(h: HistItem): HistItem["status"] {
+  const p = h.preco_atual;
+  if (!p) return h.status;
+  const dias = (Date.now() - new Date(h.registrado_em).getTime()) / 86400000;
+  if (dias > 10) return "expirado";
+  if (p <= h.sl)  return "sl";
+  if (p >= h.tp3) return "tp3";
+  if (p >= h.tp2) return "tp2";
+  if (p >= h.tp1) return "tp1";
+  return "aberto";
+}
 
 function fBRL(v: number | null | undefined) {
   if (v == null) return "—";
@@ -431,16 +471,220 @@ function RankingTable({ items, titulo }: { items: RankItem[]; titulo: string }) 
   );
 }
 
+// ── Histórico View ────────────────────────────────────────────────────────────
+
+function statusInfo(s: HistItem["status"]) {
+  if (s === "tp3") return { label: "TP3 ✅", color: "#10b981", bg: "rgba(16,185,129,0.12)" };
+  if (s === "tp2") return { label: "TP2 ✅", color: "#34d399", bg: "rgba(52,211,153,0.12)" };
+  if (s === "tp1") return { label: "TP1 ✅", color: "#84cc16", bg: "rgba(132,204,22,0.12)"  };
+  if (s === "sl")  return { label: "SL ❌",  color: "#ef4444", bg: "rgba(239,68,68,0.12)"   };
+  if (s === "expirado") return { label: "Expirado ⏱", color: "#94a3b8", bg: "rgba(148,163,184,0.1)" };
+  return               { label: "Em aberto ⏳", color: "#f59e0b", bg: "rgba(245,158,11,0.1)" };
+}
+
+function HistoricoView({
+  historico, setHistorico,
+}: {
+  historico: HistItem[];
+  setHistorico: React.Dispatch<React.SetStateAction<HistItem[]>>;
+}) {
+  const [verificando, setVerificando] = useState<string | null>(null);
+
+  async function verificar(id: string, simbolo: string) {
+    setVerificando(id);
+    try {
+      const r = await fetch(`${API}/cripto/sinais/${simbolo}`);
+      if (!r.ok) return;
+      const d = await r.json();
+      const preco: number = d.preco_atual;
+      setHistorico(prev => {
+        const next = prev.map(h => {
+          if (h.id !== id) return h;
+          const atualizado = { ...h, preco_atual: preco, verificado_em: new Date().toISOString() };
+          atualizado.status = calcStatus(atualizado);
+          return atualizado;
+        });
+        saveHist(next);
+        return next;
+      });
+    } catch {} finally { setVerificando(null); }
+  }
+
+  function remover(id: string) {
+    setHistorico(prev => { const n = prev.filter(h => h.id !== id); saveHist(n); return n; });
+  }
+
+  function limpar() {
+    if (confirm("Apagar todo o histórico de entradas?")) {
+      setHistorico([]); saveHist([]);
+    }
+  }
+
+  // Stats
+  const total = historico.length;
+  const finalizadas = historico.filter(h => h.status !== "aberto");
+  const wins = historico.filter(h => h.status === "tp1" || h.status === "tp2" || h.status === "tp3").length;
+  const losses = historico.filter(h => h.status === "sl").length;
+  const wr = finalizadas.length ? Math.round(wins / finalizadas.length * 100) : null;
+  const pnlMedio = (() => {
+    const com = historico.filter(h => h.preco_atual);
+    if (!com.length) return null;
+    return com.reduce((s, h) => s + (h.preco_atual! - h.preco_entrada) / h.preco_entrada * 100, 0) / com.length;
+  })();
+
+  return (
+    <div className="space-y-4">
+      {/* Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { l: "Total entradas", v: String(total),                                c: "var(--text-primary)"                                       },
+          { l: "Win Rate",       v: wr !== null ? `${wr}%` : "—",                c: wr !== null ? (wr >= 50 ? "#10b981" : "#ef4444") : undefined },
+          { l: "Wins / Losses",  v: `${wins} / ${losses}`,                       c: wins > losses ? "#10b981" : "#ef4444"                       },
+          { l: "P&L médio",      v: pnlMedio !== null ? `${pnlMedio >= 0 ? "+" : ""}${pnlMedio.toFixed(2)}%` : "—",
+            c: pnlMedio !== null ? (pnlMedio >= 0 ? "#10b981" : "#ef4444") : undefined },
+        ].map(({ l, v, c }) => (
+          <div key={l} className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-3">
+            <div className="text-[10px] text-[var(--text-muted)] mb-1">{l}</div>
+            <div className="text-lg font-black" style={{ color: c }}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Header + limpar */}
+      {historico.length > 0 && (
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-bold text-[var(--text-primary)]">📋 {historico.length} entrada{historico.length !== 1 ? "s" : ""} registrada{historico.length !== 1 ? "s" : ""}</span>
+          <button onClick={limpar} className="text-[11px] text-[var(--text-muted)] hover:text-red-400 transition-colors">🗑 Limpar tudo</button>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {historico.length === 0 && (
+        <div className="text-center py-16 text-[var(--text-muted)]">
+          <div className="text-5xl mb-3">📋</div>
+          <p className="font-semibold">Nenhuma entrada registrada</p>
+          <p className="text-sm mt-1">Vá em <b>Sinal Individual</b>, analise uma moeda e clique em <b>📌 Registrar Entrada</b></p>
+        </div>
+      )}
+
+      {/* Lista */}
+      <div className="flex flex-col gap-3">
+        {[...historico].reverse().map(h => {
+          const { label, color, bg } = statusInfo(h.status);
+          const pnlPct = h.preco_atual ? (h.preco_atual - h.preco_entrada) / h.preco_entrada * 100 : null;
+          const dias   = Math.floor((Date.now() - new Date(h.registrado_em).getTime()) / 86400000);
+
+          return (
+            <div key={h.id} style={{ borderRadius: 14, border: `1px solid ${color}40`, background: "var(--bg-card)", overflow: "hidden" }}>
+              {/* Top bar */}
+              <div style={{ background: bg, padding: "10px 16px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 15, fontWeight: 900, color: "var(--text-primary)" }}>{h.simbolo}</span>
+                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 8, background: `${color}20`, color }}>{label}</span>
+                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: "rgba(0,0,0,0.2)", color: scoreColor(h.score), fontWeight: 700 }}>Score {h.score}</span>
+                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{h.decisao.split(" ").slice(0, 1).join("")}</span>
+                <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-muted)" }}>
+                  {dias === 0 ? "hoje" : `${dias}d atrás`} · {new Date(h.registrado_em).toLocaleDateString("pt-BR")}
+                </span>
+              </div>
+
+              {/* Body */}
+              <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                {/* Preços */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 11 }}>
+                  {[
+                    { l: "Entrada", v: fBRL(h.preco_entrada), c: "#60a5fa" },
+                    { l: "Stop Loss", v: fBRL(h.sl), c: "#ef4444" },
+                    { l: "TP1", v: fBRL(h.tp1), c: "#84cc16" },
+                    { l: "TP2", v: fBRL(h.tp2), c: "#34d399" },
+                    { l: "TP3", v: fBRL(h.tp3), c: "#10b981" },
+                    h.preco_atual
+                      ? { l: "Preço Atual", v: fBRL(h.preco_atual), c: pnlPct! >= 0 ? "#10b981" : "#ef4444" }
+                      : { l: "Preço Atual", v: "—", c: "var(--text-muted)" as string },
+                  ].map(({ l, v, c }) => (
+                    <div key={l} style={{ background: "var(--bg)", borderRadius: 8, padding: "6px 8px" }}>
+                      <div style={{ fontSize: 9, color: "var(--text-muted)", fontWeight: 600, marginBottom: 3 }}>{l}</div>
+                      <div style={{ fontWeight: 800, color: c }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* P&L + R:R + ações */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  {pnlPct !== null && (
+                    <span style={{ fontSize: 13, fontWeight: 900, color: pnlPct >= 0 ? "#10b981" : "#ef4444" }}>
+                      {pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}% P&L
+                    </span>
+                  )}
+                  {h.rr1 && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>R:R {h.rr1}</span>}
+                  {h.verificado_em && (
+                    <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                      Verificado {new Date(h.verificado_em).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                  )}
+                  <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                    <button
+                      onClick={() => verificar(h.id, h.simbolo)}
+                      disabled={verificando === h.id}
+                      style={{ padding: "5px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700,
+                        background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.3)",
+                        color: "#60a5fa", cursor: verificando === h.id ? "not-allowed" : "pointer", opacity: verificando === h.id ? 0.6 : 1 }}>
+                      {verificando === h.id ? "⟳ Buscando..." : "🔄 Verificar"}
+                    </button>
+                    <button
+                      onClick={() => remover(h.id)}
+                      style={{ padding: "5px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700,
+                        background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)",
+                        color: "#ef4444", cursor: "pointer" }}>
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function SinaisPage() {
   const [simbolo,   setSimbol]  = useState("BTC");
-  const [modo,      setModo]    = useState<"sinal" | "ranking">("sinal");
+  const [modo,      setModo]    = useState<"sinal" | "ranking" | "historico">("sinal");
   const [sinal,     setSinal]   = useState<Sinal | null>(null);
   const [ranking,   setRanking] = useState<Record<string, RankItem[]> | null>(null);
   const [loading,   setLoading] = useState(false);
   const [loadRank,  setLoadRank]= useState(false);
   const [error,     setError]   = useState<string | null>(null);
+  const [historico, setHistorico] = useState<HistItem[]>([]);
+  const [registrado, setRegistrado] = useState(false);
+
+  useEffect(() => { setHistorico(loadHist()); }, []);
+
+  function registrar() {
+    if (!sinal) return;
+    const item: HistItem = {
+      id: Math.random().toString(36).slice(2),
+      simbolo: sinal.simbolo.replace("USDT",""),
+      decisao: sinal.decisao,
+      score: Math.round(sinal.score),
+      preco_entrada: sinal.niveis.entrada_ideal || sinal.preco_atual,
+      sl:  sinal.niveis.stop_loss,
+      tp1: sinal.niveis.take_profit_1,
+      tp2: sinal.niveis.take_profit_2,
+      tp3: sinal.niveis.take_profit_3,
+      rr1: sinal.niveis.rr_1,
+      registrado_em: new Date().toISOString(),
+      status: "aberto",
+    };
+    const nova = [...historico, item];
+    saveHist(nova);
+    setHistorico(nova);
+    setRegistrado(true);
+    setTimeout(() => setRegistrado(false), 2500);
+  }
 
   const fetchSinal = useCallback((sym: string) => {
     setLoading(true);
@@ -478,6 +722,15 @@ export default function SinaisPage() {
           <button onClick={() => setModo("ranking")}
             className={`px-4 py-2 text-xs font-bold transition-all ${modo === "ranking" ? "bg-emerald-600 text-white" : "bg-[var(--bg-card)] text-[var(--text-secondary)] hover:bg-[var(--border)]/40"}`}>
             🏆 Ranking Geral
+          </button>
+          <button onClick={() => setModo("historico")}
+            className={`px-4 py-2 text-xs font-bold transition-all relative ${modo === "historico" ? "bg-blue-600 text-white" : "bg-[var(--bg-card)] text-[var(--text-secondary)] hover:bg-[var(--border)]/40"}`}>
+            📋 Histórico
+            {historico.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-blue-500 text-white text-[9px] flex items-center justify-center font-black">
+                {historico.length}
+              </span>
+            )}
           </button>
         </div>
 
@@ -530,6 +783,17 @@ export default function SinaisPage() {
               <p className="text-xs text-[var(--text-muted)]">{sinal.nome} • {sinal.candles_usados} candles • Cache 1h</p>
             </div>
             <div className="flex gap-2 flex-wrap">
+              {/* Botão registrar entrada */}
+              <button
+                onClick={registrar}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all"
+                style={{
+                  background: registrado ? "rgba(16,185,129,0.2)" : "rgba(59,130,246,0.1)",
+                  border: `1px solid ${registrado ? "rgba(16,185,129,0.5)" : "rgba(59,130,246,0.4)"}`,
+                  color: registrado ? "#10b981" : "#60a5fa",
+                }}>
+                {registrado ? "✅ Registrada!" : "📌 Registrar Entrada"}
+              </button>
               {sinal.preco_atual && (
                 <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-lg px-3 py-2 text-center">
                   <div className="text-xs text-[var(--text-muted)]">Preço</div>
@@ -675,6 +939,11 @@ export default function SinaisPage() {
             <RankingTable items={ranking.top_tendencia ?? []} titulo="📈 Maior Tendência" />
           </div>
         </div>
+      )}
+
+      {/* ── Histórico ── */}
+      {modo === "historico" && (
+        <HistoricoView historico={historico} setHistorico={setHistorico} />
       )}
 
       <p className="text-xs text-center text-[var(--text-muted)] pb-4">
