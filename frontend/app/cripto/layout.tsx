@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart2, Zap, BrainCircuit, Repeat2, Bolt } from "lucide-react";
+import { BarChart2, Zap, BrainCircuit, Repeat2, Bolt, CheckCircle2 } from "lucide-react";
 import { CoinProvider } from "./CoinContext";
 
 const STATIC_TABS = [
@@ -43,6 +43,13 @@ const STATIC_TABS = [
     Icon: Repeat2,
     active: (p: string) => p.startsWith("/cripto/trade"),
     color: "#F59E0B",
+  },
+  {
+    href: "/cripto/finalizadas",
+    label: "Finalizadas",
+    Icon: CheckCircle2,
+    active: (p: string) => p.startsWith("/cripto/finalizadas"),
+    color: "#06B6D4",
   },
 ];
 

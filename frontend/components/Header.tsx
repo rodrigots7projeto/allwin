@@ -10,6 +10,7 @@ import {
   Zap,
   BrainCircuit,
   Repeat2,
+  CheckCircle2,
   Menu,
   X,
   ChevronLeft,
@@ -60,6 +61,13 @@ const NAV = [
     Icon: Repeat2,
     color: "#F59E0B",
     active: (p: string) => p.startsWith("/cripto/trade"),
+  },
+  {
+    href: "/cripto/finalizadas",
+    label: "Finalizadas",
+    Icon: CheckCircle2,
+    color: "#06B6D4",
+    active: (p: string) => p.startsWith("/cripto/finalizadas"),
   },
 ];
 
