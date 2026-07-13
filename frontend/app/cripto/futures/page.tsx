@@ -1959,12 +1959,29 @@ interface FutIAHistItem {
   registrado_em: string; preco_atual?: number; verificado_em?: string;
   status: "aberto" | "tp" | "sl" | "expirado";
 }
-const FUTIA_HIST_KEY = "allwin_futures_ia_hist";
+const TRADE_HIST_KEY = "allwin_trade_hist";
+const FUTIA_LEGACY_KEY = "allwin_futures_ia_hist";
+
 function loadFutIAHist(): FutIAHistItem[] {
-  try { return JSON.parse(localStorage.getItem(FUTIA_HIST_KEY) ?? "[]"); } catch { return []; }
+  try {
+    const legacy = localStorage.getItem(FUTIA_LEGACY_KEY);
+    if (legacy) {
+      const items: FutIAHistItem[] = JSON.parse(legacy);
+      const existing = JSON.parse(localStorage.getItem(TRADE_HIST_KEY) ?? "[]");
+      const merged = [...existing.filter((e: FutIAHistItem & { source: string }) => e.source !== "futures_ia"), ...items.map(i => ({ ...i, source: "futures_ia" }))];
+      localStorage.setItem(TRADE_HIST_KEY, JSON.stringify(merged));
+      localStorage.removeItem(FUTIA_LEGACY_KEY);
+    }
+    const all = JSON.parse(localStorage.getItem(TRADE_HIST_KEY) ?? "[]");
+    return all.filter((e: FutIAHistItem & { source: string }) => e.source === "futures_ia").map(({ source: _s, ...rest }: FutIAHistItem & { source: string }) => rest);
+  } catch { return []; }
 }
 function saveFutIAHist(items: FutIAHistItem[]): void {
-  localStorage.setItem(FUTIA_HIST_KEY, JSON.stringify(items));
+  try {
+    const all = JSON.parse(localStorage.getItem(TRADE_HIST_KEY) ?? "[]");
+    const others = all.filter((e: FutIAHistItem & { source: string }) => e.source !== "futures_ia");
+    localStorage.setItem(TRADE_HIST_KEY, JSON.stringify([...others, ...items.map(i => ({ ...i, source: "futures_ia" }))]));
+  } catch {}
 }
 function calcFutIAStatus(item: FutIAHistItem): FutIAHistItem["status"] {
   if (item.status !== "aberto") return item.status;

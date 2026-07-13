@@ -146,13 +146,30 @@ interface HistItem {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const HIST_KEY = "allwin_sinais_hist";
+const TRADE_HIST_KEY = "allwin_trade_hist";
+const SINAIS_LEGACY_KEY = "allwin_sinais_hist";
+
 function loadHist(): HistItem[] {
   if (typeof window === "undefined") return [];
-  try { return JSON.parse(localStorage.getItem(HIST_KEY) ?? "[]"); } catch { return []; }
+  try {
+    const legacy = localStorage.getItem(SINAIS_LEGACY_KEY);
+    if (legacy) {
+      const items: HistItem[] = JSON.parse(legacy);
+      const existing = JSON.parse(localStorage.getItem(TRADE_HIST_KEY) ?? "[]");
+      const merged = [...existing.filter((e: HistItem & { source: string }) => e.source !== "sinais"), ...items.map(i => ({ ...i, source: "sinais" }))];
+      localStorage.setItem(TRADE_HIST_KEY, JSON.stringify(merged));
+      localStorage.removeItem(SINAIS_LEGACY_KEY);
+    }
+    const all = JSON.parse(localStorage.getItem(TRADE_HIST_KEY) ?? "[]");
+    return all.filter((e: HistItem & { source: string }) => e.source === "sinais").map(({ source: _s, ...rest }: HistItem & { source: string }) => rest);
+  } catch { return []; }
 }
 function saveHist(items: HistItem[]) {
-  try { localStorage.setItem(HIST_KEY, JSON.stringify(items)); } catch {}
+  try {
+    const all = JSON.parse(localStorage.getItem(TRADE_HIST_KEY) ?? "[]");
+    const others = all.filter((e: HistItem & { source: string }) => e.source !== "sinais");
+    localStorage.setItem(TRADE_HIST_KEY, JSON.stringify([...others, ...items.map(i => ({ ...i, source: "sinais" }))]));
+  } catch {}
 }
 
 function calcStatus(h: HistItem): HistItem["status"] {
