@@ -2023,36 +2023,59 @@ function computeLearnStats(wallets: Record<string, FuturesWallet>) {
 function _calcCalibracaoThresholds(learn: ReturnType<typeof computeLearnStats>): {
   minScore: number; minIAConf: number; avgWR: number | null;
   wrLong: number | null; wrShort: number | null; calibrado: boolean;
+  sweetSpot: string | null;
 } {
   const DATA_MIN = 30;
   const totalOps = learn.totalTrades;
-  if (totalOps < DATA_MIN) return { minScore: 40, minIAConf: 55, avgWR: null, wrLong: null, wrShort: null, calibrado: false };
+  if (totalOps < DATA_MIN) return { minScore: 40, minIAConf: 42, avgWR: null, wrLong: null, wrShort: null, calibrado: false, sweetSpot: null };
 
   const wr35 = learn.wr(learn.byScore["35-50"]);
   const wr50 = learn.wr(learn.byScore["50-65"]);
   const wr65 = learn.wr(learn.byScore["65-80"]);
   const wr80 = learn.wr(learn.byScore["80+"]);
 
+  // ── Encontra o "sweet spot": faixa de score com melhor WR ────────────────────
+  // NÃO eleva minScore por causa de faixas maiores com WR ruim —
+  // se score 35-50 funciona bem, ele deve continuar gerando sinais.
   let minScore = 40;
-  if (wr35 !== null && wr35 < 44) minScore = Math.max(minScore, 52);
-  if (wr50 !== null && wr50 < 44) minScore = Math.max(minScore, 66);
-  if (wr65 !== null && wr65 < 44) minScore = Math.max(minScore, 80);
+  let sweetSpot: string | null = null;
+  if (wr35 !== null && wr35 >= 44) {
+    minScore = 35; sweetSpot = "35-50";   // faixa mais baixa funciona — mantém aberto
+  } else if (wr50 !== null && wr50 >= 44) {
+    minScore = 50; sweetSpot = "50-65";
+  } else if (wr65 !== null && wr65 >= 44) {
+    minScore = 65; sweetSpot = "65-80";
+  } else if (wr80 !== null && wr80 >= 44) {
+    minScore = 80; sweetSpot = "80+";
+  } else {
+    // Nenhuma faixa boa: sobe progressivamente, mas cap em 75
+    if (wr35 !== null && wr35 < 44) minScore = Math.max(minScore, 52);
+    if (wr50 !== null && wr50 < 44) minScore = Math.max(minScore, 66);
+    if (wr65 !== null && wr65 < 44) minScore = Math.max(minScore, 75);
+  }
+  minScore = Math.min(minScore, 75); // cap: sempre gera alguns sinais
 
   const allWRs = [wr35, wr50, wr65, wr80].filter((w): w is number => w !== null);
   const avgWR  = allWRs.length >= 2 ? allWRs.reduce((a, b) => a + b, 0) / allWRs.length : null;
 
-  let minIAConf = 55;
-  if (avgWR !== null) {
-    if (avgWR < 35) minIAConf = 78;
-    else if (avgWR < 44) minIAConf = 68;
-    else if (avgWR < 50) minIAConf = 60;
+  // ── minIAConf: usa WR da melhor faixa operacional ────────────────────────────
+  const bestRangeWR = sweetSpot ? (
+    sweetSpot === "35-50" ? wr35 : sweetSpot === "50-65" ? wr50 :
+    sweetSpot === "65-80" ? wr65 : wr80
+  ) : avgWR;
+  let minIAConf = 42;
+  if (bestRangeWR !== null) {
+    if (bestRangeWR < 35)  minIAConf = 68;
+    else if (bestRangeWR < 44) minIAConf = 58;
+    else if (bestRangeWR < 50) minIAConf = 44;
+    else                       minIAConf = 40;  // ≥50% WR — permite mais sinais
   }
 
   return {
     minScore, minIAConf, avgWR,
     wrLong:  learn.wr(learn.byDir["LONG"]),
     wrShort: learn.wr(learn.byDir["SHORT"]),
-    calibrado: true,
+    calibrado: true, sweetSpot,
   };
 }
 
@@ -2061,10 +2084,17 @@ function getCalibracaoIA(wallets: Record<string, FuturesWallet>): ReturnType<typ
   const cal      = _calcCalibracaoThresholds(learn);
   const totalOps = learn.totalTrades;
   let resumo = "";
-  if (!cal.calibrado) resumo = `${totalOps} ops — aguardando ${30 - totalOps} ops para auto-calibrar`;
-  else if (cal.avgWR !== null && cal.avgWR < 44)
-    resumo = `WR média ${cal.avgWR.toFixed(0)}% — filtrando: score≥${cal.minScore} / conf≥${cal.minIAConf}% para buscar 51%+`;
-  else resumo = `Calibrado: score≥${cal.minScore}, conf≥${cal.minIAConf}%`;
+  if (!cal.calibrado) {
+    resumo = `${totalOps} ops — aguardando ${30 - totalOps} ops para auto-calibrar`;
+  } else if (cal.sweetSpot) {
+    const wr = cal.sweetSpot === "35-50" ? learn.wr(learn.byScore["35-50"]) :
+               cal.sweetSpot === "50-65" ? learn.wr(learn.byScore["50-65"]) :
+               cal.sweetSpot === "65-80" ? learn.wr(learn.byScore["65-80"]) :
+               learn.wr(learn.byScore["80+"]);
+    resumo = `Sweet spot Score ${cal.sweetSpot} com ${wr?.toFixed(0) ?? "?"}% WR — score≥${cal.minScore}, conf≥${cal.minIAConf}%`;
+  } else {
+    resumo = `Buscando sweet spot — score≥${cal.minScore}, conf≥${cal.minIAConf}%`;
+  }
   return { ...cal, totalOps, resumo };
 }
 
@@ -2092,23 +2122,33 @@ function gerarSinaisIA(scan: FuturesScanData, wallets: Record<string, FuturesWal
     const learnDir   = learn.wr(learn.byDir[it.direction as "LONG" | "SHORT"]);
     const learnGrade = it.grade in learn.byGrade ? learn.wr(learn.byGrade[it.grade]) : null;
 
-    // ia_conf: quando WR histórico é ruim, o histórico domina mais
+    // ia_conf: quando WR histórico é ruim, histórico domina; quando é bom, confiar mais no score bruto
     let ia_conf = it.score_final * 0.5 + (it.direction_confidence ?? 50) * 0.5;
     if (learnScore !== null) {
-      const histWeight = learnScore < 44 ? 0.75 : 0.60;
-      ia_conf = ia_conf * (1 - histWeight) + learnScore * histWeight;
+      if (learnScore < 44) {
+        // WR ruim nessa faixa → histórico domina forte
+        const histWeight = learnScore < 30 ? 0.80 : 0.72;
+        ia_conf = ia_conf * (1 - histWeight) + learnScore * histWeight;
+      } else {
+        // WR aceitável ou boa → apenas leve ajuste pelo histórico
+        ia_conf = ia_conf * 0.80 + learnScore * 0.20;
+      }
     } else if (learnDir !== null) {
-      ia_conf = ia_conf * 0.6 + learnDir * 0.4;
+      if (learnDir < 44) ia_conf = ia_conf * 0.65 + learnDir * 0.35;
+      // Se learnDir é bom, não ajustar (manter score bruto)
     }
-    if (learnGrade !== null) ia_conf = ia_conf * 0.7 + learnGrade * 0.3;
-    if (it.grade === "A+") ia_conf = Math.min(100, ia_conf * 1.08);
+    if (learnGrade !== null && learnGrade < 44) ia_conf = ia_conf * 0.75 + learnGrade * 0.25;
+    if (it.grade === "A+") ia_conf = Math.min(100, ia_conf * 1.10);
     if (it.grade === "C")  ia_conf = Math.max(0,   ia_conf * 0.85);
     const finalConf = Math.min(100, Math.max(0, ia_conf));
 
-    // Limiar por direção (penaliza direção com WR ruim)
+    // Limiar por direção: bloqueia direção com WR ruim, libera direção com WR boa
     let dirMinConf = cal.minIAConf;
-    if (it.direction === "LONG"  && cal.wrLong  !== null && cal.wrLong  < 44) dirMinConf = Math.max(dirMinConf, 72);
-    if (it.direction === "SHORT" && cal.wrShort !== null && cal.wrShort < 44) dirMinConf = Math.max(dirMinConf, 72);
+    if (it.direction === "LONG"  && cal.wrLong  !== null && cal.wrLong  < 44) dirMinConf = Math.max(dirMinConf, 70);
+    if (it.direction === "SHORT" && cal.wrShort !== null && cal.wrShort < 44) dirMinConf = Math.max(dirMinConf, 70);
+    // Bônus: se SHORT tem WR ≥51%, reduz o limiar para SHORT
+    if (it.direction === "SHORT" && cal.wrShort !== null && cal.wrShort >= 51) dirMinConf = Math.min(dirMinConf, 38);
+    if (it.direction === "LONG"  && cal.wrLong  !== null && cal.wrLong  >= 51) dirMinConf = Math.min(dirMinConf, 38);
 
     // Descartar sinal se confiança abaixo do limiar calibrado
     if (finalConf < dirMinConf) continue;
@@ -2415,7 +2455,7 @@ function FuturesIASinaisView({ scan, wallets, autoTrade, setAutoTrade }:
         {([
           { k: "sinais" as const,      icon: "🧠", label: "Sinais IA" },
           { k: "aprendizado" as const, icon: "🎓", label: learn.totalTrades > 0 ? `Aprendizado (${learn.totalTrades})` : "Aprendizado" },
-          { k: "historico" as const,   icon: "📋", label: historico.length > 0 ? `Histórico (${historico.length})` : "Histórico" },
+          { k: "historico" as const,   icon: "📋", label: learn.totalTrades > 0 ? `Histórico (${learn.totalTrades})` : historico.length > 0 ? `Histórico (${historico.length})` : "Histórico" },
         ]).map(({ k, icon, label }) => (
           <button key={k} onClick={() => setModo(k)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
@@ -2620,7 +2660,7 @@ function FuturesIASinaisView({ scan, wallets, autoTrade, setAutoTrade }:
       {modo === "aprendizado" && <FutIAAprendizadoView learn={learn} cal={cal} />}
 
       {/* ── HISTÓRICO ── */}
-      {modo === "historico" && <FutIAHistoricoView historico={historico} onRemover={removeHist} onVerificar={verificarHist} />}
+      {modo === "historico" && <FutIAHistoricoView historico={historico} wallets={wallets} onRemover={removeHist} onVerificar={verificarHist} />}
     </div>
   );
 }
@@ -2641,14 +2681,15 @@ function FutIAAprendizadoView({ learn, cal }: {
   const insights: { icon: string; msg: string; cor: string }[] = [];
   const wrLong  = learn.wr(learn.byDir["LONG"]);
   const wrShort = learn.wr(learn.byDir["SHORT"]);
-  if (!cal.calibrado)       insights.push({ icon: "⏳", msg: cal.resumo, cor: "var(--text-muted)" });
-  if (cal.calibrado && cal.avgWR !== null && cal.avgWR < 44)
-    insights.push({ icon: "🔧", msg: `WR média ${cal.avgWR.toFixed(0)}% — IA elevou score mínimo para ${cal.minScore} e exige confiança ≥${cal.minIAConf}%`, cor: "#a78bfa" });
-  if (wrLong  !== null && wrLong  < 44) insights.push({ icon: "⚠️", msg: `LONG com ${wrLong.toFixed(0)}% WR — IA exigindo conf ≥72% para sinais LONG`, cor: "#f59e0b" });
-  if (wrShort !== null && wrShort < 44) insights.push({ icon: "⚠️", msg: `SHORT com ${wrShort.toFixed(0)}% WR — IA exigindo conf ≥72% para sinais SHORT`, cor: "#f59e0b" });
-  if (wrLong  !== null && wrLong  >= 51) insights.push({ icon: "✅", msg: `LONG com ${wrLong.toFixed(0)}% WR — dentro da meta de 51%+`, cor: "#10b981" });
-  if (wrShort !== null && wrShort >= 51) insights.push({ icon: "✅", msg: `SHORT com ${wrShort.toFixed(0)}% WR — dentro da meta de 51%+`, cor: "#10b981" });
-  if (cal.avgWR !== null && cal.avgWR >= 51) insights.push({ icon: "🎯", msg: `WR média ${cal.avgWR.toFixed(0)}% — META ATINGIDA! IA operando sem restrições extras`, cor: "#10b981" });
+  if (!cal.calibrado) insights.push({ icon: "⏳", msg: cal.resumo, cor: "var(--text-muted)" });
+  if (cal.sweetSpot)  insights.push({ icon: "🎯", msg: `Sweet spot identificado: Score ${cal.sweetSpot} — IA gerando sinais nessa faixa`, cor: "#a78bfa" });
+  if (wrLong  !== null && wrLong  < 44) insights.push({ icon: "⚠️", msg: `LONG com ${wrLong.toFixed(0)}% WR (meta: 51%+) — sinais LONG bloqueados até melhorar`, cor: "#f59e0b" });
+  if (wrShort !== null && wrShort < 44) insights.push({ icon: "⚠️", msg: `SHORT com ${wrShort.toFixed(0)}% WR (meta: 51%+) — sinais SHORT bloqueados até melhorar`, cor: "#f59e0b" });
+  if (wrLong  !== null && wrLong  >= 51) insights.push({ icon: "✅", msg: `LONG com ${wrLong.toFixed(0)}% WR — META ATINGIDA! LONG liberado.`, cor: "#10b981" });
+  if (wrShort !== null && wrShort >= 51) insights.push({ icon: "✅", msg: `SHORT com ${wrShort.toFixed(0)}% WR — META ATINGIDA! SHORT liberado.`, cor: "#10b981" });
+  if (wrLong  !== null && wrLong  >= 44 && wrLong  < 51) insights.push({ icon: "📈", msg: `LONG em ${wrLong.toFixed(0)}% — quase na meta de 51%+`, cor: "#f59e0b" });
+  if (wrShort !== null && wrShort >= 44 && wrShort < 51) insights.push({ icon: "📈", msg: `SHORT em ${wrShort.toFixed(0)}% — quase na meta de 51%+`, cor: "#f59e0b" });
+  if (cal.avgWR !== null && cal.avgWR >= 51) insights.push({ icon: "🏆", msg: `WR média ${cal.avgWR.toFixed(0)}% — META GLOBAL ATINGIDA! IA operando livremente`, cor: "#10b981" });
   const gradeAp = learn.wr(learn.byGrade["A+"]);
   if (gradeAp !== null && gradeAp >= 55) insights.push({ icon: "⭐", msg: `Grade A+ com ${gradeAp.toFixed(0)}% WR — priorizar ativos Grade A+`, cor: "#f59e0b" });
   if (learn.totalTrades === 0) insights.push({ icon: "🤖", msg: "Sem histórico ainda. Ligue o Auto Trade para a IA começar a aprender.", cor: "var(--text-muted)" });
@@ -2757,12 +2798,17 @@ function FutIAAprendizadoView({ learn, cal }: {
 
 // ── IA Histórico Manual View ───────────────────────────────────────────────────
 
-function FutIAHistoricoView({ historico, onRemover, onVerificar }: {
+function FutIAHistoricoView({ historico, wallets, onRemover, onVerificar }: {
   historico: FutIAHistItem[];
+  wallets: Record<string, FuturesWallet>;
   onRemover: (id: string) => void;
   onVerificar: (id: string) => Promise<void>;
 }) {
+  const [fonte, setFonte]     = useState<"auto" | "manual">("auto");
+  const [dirFilt, setDirFilt] = useState<"ALL" | "LONG" | "SHORT">("ALL");
   const [verificando, setVerificando] = useState<string | null>(null);
+  const [pagina, setPagina]   = useState(0);
+  const PER_PAGE = 30;
 
   const handleVerificar = async (id: string) => {
     setVerificando(id);
@@ -2770,139 +2816,246 @@ function FutIAHistoricoView({ historico, onRemover, onVerificar }: {
     setVerificando(null);
   };
 
-  const abertos  = historico.filter(h => h.status === "aberto");
-  const fechados = historico.filter(h => h.status !== "aberto");
-  const wins     = fechados.filter(h => h.status === "tp").length;
-  const losses   = fechados.filter(h => h.status === "sl").length;
-  const wr       = fechados.length > 0 ? wins / fechados.length * 100 : null;
-
-  const fmtP = (v: number) => v >= 1000
-    ? v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : v.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
-
-  const statusLabel = (s: FutIAHistItem["status"]) =>
-    s === "aberto"   ? { label: "Aberto",       cor: "#3b82f6" } :
-    s === "tp"       ? { label: "✅ TP",         cor: "#10b981" } :
-    s === "sl"       ? { label: "❌ SL",         cor: "#ef4444" } :
-                       { label: "⏰ Expirado",   cor: "#6b7280" };
-
-  const pnlPct = (item: FutIAHistItem): number | null => {
-    if (!item.preco_atual) return null;
-    const isLong = item.direction === "LONG";
-    const diff   = isLong
-      ? (item.preco_atual - item.preco_entrada) / item.preco_entrada * 100
-      : (item.preco_entrada - item.preco_atual) / item.preco_entrada * 100;
-    return diff * item.leverage;
-  };
-
-  if (historico.length === 0) {
-    return (
-      <div className="text-center py-16 rounded-xl" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-        <div className="text-3xl mb-3">📋</div>
-        <div className="text-sm font-bold" style={{ color: "var(--text-secondary)" }}>Nenhuma entrada registrada</div>
-        <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-          Em "Sinais IA", clique em "📌 Registrar Entrada" nos sinais que você abrir
-        </div>
-      </div>
-    );
+  // ── Auto-trade: agrega vendas (tipo=V) de todas as carteiras ─────────────────
+  const walletTrades: (FuturesTrade & { perfilId: string })[] = [];
+  for (const [id, w] of Object.entries(wallets)) {
+    for (const t of w.trades) {
+      if (t.tipo === "V") walletTrades.push({ ...t, perfilId: id });
+    }
   }
+  walletTrades.sort((a, b) => b.time - a.time);
+
+  // ── Aplica filtros ────────────────────────────────────────────────────────────
+  const autoFiltered = dirFilt === "ALL" ? walletTrades : walletTrades.filter(t => t.direction === dirFilt);
+  const manualFiltered = dirFilt === "ALL" ? historico : historico.filter(h => h.direction === dirFilt);
+
+  const autoWins  = walletTrades.filter(t => (t.pnl_brl ?? 0) > 0).length;
+  const autoLong  = walletTrades.filter(t => t.direction === "LONG");
+  const autoShort = walletTrades.filter(t => t.direction === "SHORT");
+  const wrLong  = autoLong.length  ? autoLong.filter(t => (t.pnl_brl ?? 0) > 0).length / autoLong.length * 100  : null;
+  const wrShort = autoShort.length ? autoShort.filter(t => (t.pnl_brl ?? 0) > 0).length / autoShort.length * 100 : null;
+  const autoWR  = walletTrades.length ? autoWins / walletTrades.length * 100 : null;
+  const autoPnl = walletTrades.reduce((a, t) => a + (t.pnl_brl ?? 0), 0);
+
+  const fmtBRL = (v: number) => `R$ ${Math.abs(v) >= 1000 ? (v / 1000).toFixed(1) + "k" : v.toFixed(2)}`;
+  const corWR  = (v: number | null) => v === null ? "var(--text-muted)" : v >= 55 ? "#10b981" : v >= 44 ? "#f59e0b" : "#ef4444";
+
+  const totalAuto   = walletTrades.length;
+  const totalManual = historico.length;
+
+  const paginatedAuto   = autoFiltered.slice(pagina * PER_PAGE, (pagina + 1) * PER_PAGE);
+  const totalPages      = Math.ceil(autoFiltered.length / PER_PAGE);
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: "Total",         val: String(historico.length), cor: "var(--text-primary)" },
-          { label: "Abertas",       val: String(abertos.length),   cor: "#3b82f6" },
-          { label: "Win Rate",      val: wr !== null ? `${wr.toFixed(0)}%` : "—", cor: wr !== null && wr >= 51 ? "#10b981" : "#ef4444" },
-          { label: "Wins / Losses", val: `${wins}W / ${losses}L`, cor: wins >= losses ? "#10b981" : "#ef4444" },
-        ].map(({ label, val, cor }) => (
-          <div key={label} className="p-3 rounded-xl" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-            <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>{label}</div>
-            <div className="text-lg font-black" style={{ color: cor }}>{val}</div>
-          </div>
-        ))}
+
+      {/* Toggles fonte + direção */}
+      <div className="flex flex-wrap gap-2 justify-between">
+        <div className="flex gap-2">
+          {([
+            { k: "auto" as const,   label: `Auto Trade (${totalAuto})` },
+            { k: "manual" as const, label: `Registros Manuais (${totalManual})` },
+          ]).map(({ k, label }) => (
+            <button key={k} onClick={() => { setFonte(k); setPagina(0); }}
+              className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
+              style={{
+                background: fonte === k ? "rgba(139,92,246,0.18)" : "var(--bg-card)",
+                color: fonte === k ? "#a78bfa" : "var(--text-muted)",
+                border: `1px solid ${fonte === k ? "rgba(139,92,246,0.4)" : "var(--border)"}`,
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-1">
+          {(["ALL","LONG","SHORT"] as const).map(d => (
+            <button key={d} onClick={() => { setDirFilt(d); setPagina(0); }}
+              className="px-2.5 py-1 rounded-lg text-[10px] font-bold"
+              style={{
+                background: dirFilt === d ? (d==="LONG"?"rgba(16,185,129,0.18)":d==="SHORT"?"rgba(239,68,68,0.18)":"rgba(99,102,241,0.15)") : "var(--bg-card)",
+                color: dirFilt === d ? (d==="LONG"?"#10b981":d==="SHORT"?"#ef4444":"#818cf8") : "var(--text-muted)",
+                border: `1px solid ${dirFilt === d ? "var(--border)" : "var(--border)"}`,
+              }}>
+              {d}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* List */}
-      <div className="flex flex-col gap-3">
-        {historico.map(item => {
-          const isLong  = item.direction === "LONG";
-          const accentC = isLong ? "#10b981" : "#ef4444";
-          const stat    = statusLabel(item.status);
-          const pnl     = pnlPct(item);
-          const daysAgo = Math.floor((Date.now() - new Date(item.registrado_em).getTime()) / 86400000);
+      {/* ── AUTO TRADE ── */}
+      {fonte === "auto" && (
+        <>
+          {/* Stats globais */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { label: "Total Ops",   val: String(totalAuto), cor: "var(--text-primary)" },
+              { label: "WR Global",   val: autoWR !== null ? `${autoWR.toFixed(1)}%` : "—", cor: corWR(autoWR) },
+              { label: "P&L Total",   val: totalAuto ? `${autoPnl >= 0 ? "+" : ""}${fmtBRL(autoPnl)}` : "—", cor: autoPnl >= 0 ? "#10b981" : "#ef4444" },
+              { label: "Wins",        val: `${autoWins}W / ${totalAuto - autoWins}L`, cor: autoWins >= totalAuto - autoWins ? "#10b981" : "#ef4444" },
+            ].map(({ label, val, cor }) => (
+              <div key={label} className="p-3 rounded-xl" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+                <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>{label}</div>
+                <div className="text-lg font-black tabular-nums" style={{ color: cor }}>{val}</div>
+              </div>
+            ))}
+          </div>
 
-          return (
-            <div key={item.id} className="rounded-xl overflow-hidden" style={{ border: `1px solid ${accentC}30`, background: "var(--bg-card)" }}>
-              {/* Header */}
-              <div className="flex items-center justify-between px-4 py-2.5" style={{ background: `${accentC}10`, borderBottom: `1px solid ${accentC}20` }}>
-                <div className="flex items-center gap-2">
-                  <span className="font-black text-sm" style={{ color: accentC }}>{isLong ? "▲" : "▼"} {item.simbolo.replace("USDT","")}</span>
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: `${accentC}20`, color: accentC }}>{item.direction}</span>
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: "var(--bg)", color: "#a78bfa" }}>{item.leverage}x</span>
+          {/* WR por direção — destaque */}
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { dir: "LONG",  wr: wrLong,  ops: autoLong.length,  wins: autoLong.filter(t=>(t.pnl_brl??0)>0).length,  cor: "#10b981" },
+              { dir: "SHORT", wr: wrShort, ops: autoShort.length, wins: autoShort.filter(t=>(t.pnl_brl??0)>0).length, cor: "#ef4444" },
+            ].map(({ dir, wr, ops, wins, cor }) => (
+              <div key={dir} className="p-3 rounded-xl" style={{ background: "var(--bg-card)", border: `1px solid ${wr !== null && wr >= 51 ? cor + "55" : "var(--border)"}` }}>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold" style={{ color: cor }}>{dir === "LONG" ? "▲" : "▼"} {dir}</span>
+                  {wr !== null && wr >= 51 && <span className="text-[9px] font-bold text-emerald-400">✅ META</span>}
+                  {wr !== null && wr < 44 && <span className="text-[9px] font-bold text-red-400">⚠️ Baixo</span>}
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black" style={{ color: stat.cor }}>{stat.label}</span>
-                  <button onClick={() => onRemover(item.id)} className="text-[9px] px-1.5 py-0.5 rounded border transition-colors"
-                    style={{ borderColor: "rgba(239,68,68,0.3)", color: "#ef4444" }}>✕</button>
+                <div className="text-2xl font-black tabular-nums mt-1" style={{ color: wr !== null && wr >= 51 ? "#10b981" : wr !== null && wr >= 44 ? "#f59e0b" : "#ef4444" }}>
+                  {wr !== null ? `${wr.toFixed(1)}%` : "—"}
+                </div>
+                <div className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  {ops} ops · {wins}W · {ops - wins}L
                 </div>
               </div>
+            ))}
+          </div>
 
-              {/* Price levels */}
-              <div className="grid grid-cols-3 text-xs" style={{ borderBottom: "1px solid var(--border)" }}>
-                <div className="px-3 py-2 border-r" style={{ borderColor: "var(--border)" }}>
-                  <div className="text-[8px] font-bold" style={{ color: accentC }}>📍 Entrada</div>
-                  <div className="font-black tabular-nums" style={{ color: accentC }}>R$ {fmtP(item.preco_entrada)}</div>
-                </div>
-                <div className="px-3 py-2 border-r" style={{ borderColor: "var(--border)" }}>
-                  <div className="text-[8px] font-bold text-red-400">🛑 SL</div>
-                  <div className="font-black tabular-nums text-red-400">R$ {fmtP(item.sl)}</div>
-                  <div className="text-[8px] text-red-400/70">−{(item.sl_pct*100).toFixed(1)}%</div>
-                </div>
-                <div className="px-3 py-2">
-                  <div className="text-[8px] font-bold text-emerald-400">🎯 TP</div>
-                  <div className="font-black tabular-nums text-emerald-400">R$ {fmtP(item.tp)}</div>
-                  <div className="text-[8px] text-emerald-400/70">+{(item.tp_pct*100).toFixed(1)}%</div>
+          {autoFiltered.length === 0 ? (
+            <div className="text-center py-12 rounded-xl" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+              <div className="text-2xl mb-2">📋</div>
+              <div className="text-sm" style={{ color: "var(--text-muted)" }}>Sem operações fechadas{dirFilt !== "ALL" ? ` para ${dirFilt}` : ""}</div>
+            </div>
+          ) : (
+            <>
+              <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+                <div className="overflow-x-auto">
+                  <table className="w-full" style={{ fontSize: "11px" }}>
+                    <thead>
+                      <tr style={{ background: "var(--bg-card)", borderBottom: "1px solid var(--border)" }}>
+                        {["Ativo","Dir","Score","P&L","Resultado","Motivo","Hora"].map(h => (
+                          <th key={h} className="px-3 py-2 text-left font-bold" style={{ color: "var(--text-muted)" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedAuto.map((t, i) => {
+                        const win  = (t.pnl_brl ?? 0) > 0;
+                        const pct  = t.pct ?? 0;
+                        const dirC = t.direction === "LONG" ? "#10b981" : "#ef4444";
+                        const motivo = t.motivo_saida ?? (win ? "TP atingido" : "SL atingido");
+                        return (
+                          <tr key={t.id ?? i} style={{ borderBottom: "1px solid var(--border)", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)" }}>
+                            <td className="px-3 py-2 font-bold" style={{ color: dirC }}>
+                              {t.simbolo.replace("USDT","")}
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className="font-bold text-[10px] px-1.5 py-0.5 rounded" style={{ background: `${dirC}18`, color: dirC }}>
+                                {t.direction === "LONG" ? "▲" : "▼"} {t.direction}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 tabular-nums" style={{ color: "var(--text-secondary)" }}>
+                              {t.score.toFixed(0)}
+                            </td>
+                            <td className="px-3 py-2 font-black tabular-nums" style={{ color: win ? "#10b981" : "#ef4444" }}>
+                              {win ? "+" : ""}{fmtBRL(t.pnl_brl ?? 0)}
+                              <span className="text-[9px] ml-1" style={{ color: "var(--text-muted)" }}>({pct >= 0 ? "+" : ""}{pct.toFixed(1)}%)</span>
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className="font-bold text-[10px]" style={{ color: win ? "#10b981" : "#ef4444" }}>
+                                {win ? "✅ WIN" : "❌ LOSS"}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 max-w-[140px] truncate" style={{ color: "var(--text-muted)" }} title={motivo}>
+                              {motivo}
+                            </td>
+                            <td className="px-3 py-2 tabular-nums" style={{ color: "var(--text-muted)" }}>
+                              {new Date(t.time).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" })}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-
-              {/* Current + P&L */}
-              <div className="flex items-center justify-between px-4 py-2">
-                <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                  {item.preco_atual
-                    ? <>Preço atual: <span className="font-bold" style={{ color: "var(--text-secondary)" }}>R$ {fmtP(item.preco_atual)}</span></>
-                    : "Sem preço atual — clique verificar"}
-                  {item.verificado_em && (
-                    <span className="ml-2 text-[8px]" style={{ color: "var(--text-muted)" }}>
-                      · {new Date(item.verificado_em).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" })}
-                    </span>
-                  )}
-                </div>
-                {pnl !== null && (
-                  <div className="font-black text-sm tabular-nums" style={{ color: pnl >= 0 ? "#10b981" : "#ef4444" }}>
-                    {pnl >= 0 ? "+" : ""}{pnl.toFixed(1)}% c/{item.leverage}x
-                  </div>
-                )}
-              </div>
-
-              {/* Footer */}
-              <div className="flex items-center justify-between px-4 pb-3">
-                <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>
-                  Score {item.score.toFixed(0)} · Conf IA {item.ia_conf.toFixed(0)}% · {daysAgo === 0 ? "hoje" : `${daysAgo}d atrás`}
-                </div>
-                {item.status === "aberto" && (
-                  <button onClick={() => handleVerificar(item.id)} disabled={verificando === item.id}
-                    className="px-2.5 py-1 rounded-lg text-[9px] font-bold transition-all"
-                    style={{ background: "rgba(59,130,246,0.15)", color: "#60a5fa", border: "1px solid rgba(59,130,246,0.3)" }}>
-                    {verificando === item.id ? "..." : "🔄 Verificar"}
+              {/* Paginação */}
+              {totalPages > 1 && (
+                <div className="flex justify-center gap-2">
+                  <button onClick={() => setPagina(p => Math.max(0, p - 1))} disabled={pagina === 0}
+                    className="px-3 py-1 rounded text-xs" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-muted)", opacity: pagina === 0 ? 0.4 : 1 }}>
+                    ← Anterior
                   </button>
-                )}
+                  <span className="text-xs px-2 py-1" style={{ color: "var(--text-muted)" }}>
+                    {pagina + 1} / {totalPages} · {autoFiltered.length} ops
+                  </span>
+                  <button onClick={() => setPagina(p => Math.min(totalPages - 1, p + 1))} disabled={pagina >= totalPages - 1}
+                    className="px-3 py-1 rounded text-xs" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-muted)", opacity: pagina >= totalPages - 1 ? 0.4 : 1 }}>
+                    Próximo →
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      {/* ── MANUAL ── */}
+      {fonte === "manual" && (
+        <>
+          {manualFiltered.length === 0 ? (
+            <div className="text-center py-16 rounded-xl" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+              <div className="text-3xl mb-3">📋</div>
+              <div className="text-sm font-bold" style={{ color: "var(--text-secondary)" }}>Nenhuma entrada registrada manualmente</div>
+              <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                Em "Sinais IA", clique em "📌 Registrar Entrada" nos sinais que você abrir
               </div>
             </div>
-          );
-        })}
-      </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {manualFiltered.map(item => {
+                const isLong  = item.direction === "LONG";
+                const accentC = isLong ? "#10b981" : "#ef4444";
+                const statusLabel = item.status === "aberto" ? { label: "Aberto", cor: "#3b82f6" } :
+                                    item.status === "tp"     ? { label: "✅ TP",  cor: "#10b981" } :
+                                    item.status === "sl"     ? { label: "❌ SL",  cor: "#ef4444" } :
+                                                               { label: "⏰ Exp",  cor: "#6b7280" };
+                return (
+                  <div key={item.id} className="rounded-xl overflow-hidden" style={{ border: `1px solid ${accentC}30`, background: "var(--bg-card)" }}>
+                    <div className="flex items-center justify-between px-4 py-2.5" style={{ background: `${accentC}10`, borderBottom: `1px solid ${accentC}20` }}>
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-sm" style={{ color: accentC }}>{isLong ? "▲" : "▼"} {item.simbolo.replace("USDT","")}</span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: `${accentC}20`, color: accentC }}>{item.direction}</span>
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: "var(--bg)", color: "#a78bfa" }}>{item.leverage}x</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black" style={{ color: statusLabel.cor }}>{statusLabel.label}</span>
+                        <button onClick={() => onRemover(item.id)} className="text-[9px] px-1.5 py-0.5 rounded border" style={{ borderColor: "rgba(239,68,68,0.3)", color: "#ef4444" }}>✕</button>
+                      </div>
+                    </div>
+                    <div className="px-4 py-2 text-[10px] flex gap-4" style={{ color: "var(--text-muted)" }}>
+                      <span>Entrada: <strong style={{ color: accentC }}>R$ {item.preco_entrada.toFixed(4)}</strong></span>
+                      <span>SL: <strong className="text-red-400">−{(item.sl_pct*100).toFixed(1)}%</strong></span>
+                      <span>TP: <strong className="text-emerald-400">+{(item.tp_pct*100).toFixed(1)}%</strong></span>
+                      <span>Score: {item.score.toFixed(0)}</span>
+                    </div>
+                    {item.status === "aberto" && (
+                      <div className="px-4 pb-3">
+                        <button onClick={() => handleVerificar(item.id)} disabled={verificando === item.id}
+                          className="px-2.5 py-1 rounded-lg text-[9px] font-bold"
+                          style={{ background: "rgba(59,130,246,0.15)", color: "#60a5fa", border: "1px solid rgba(59,130,246,0.3)" }}>
+                          {verificando === item.id ? "..." : "🔄 Verificar"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
