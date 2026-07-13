@@ -5,6 +5,7 @@ import {
   CartesianGrid, Legend, Line, LineChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import { AnaliseHubNav } from "@/components/AnaliseHubNav";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
@@ -307,6 +308,7 @@ export default function ComparativoBTCPage() {
   return (
     <div className="min-h-screen bg-[var(--bg)]">
       <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        <AnaliseHubNav />
 
         {/* ── View toggle ── */}
         <div className="flex flex-wrap gap-3 items-center justify-between">

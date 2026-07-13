@@ -5,34 +5,62 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { ThemeToggle } from "./ThemeToggle";
 import {
+  LayoutDashboard,
   BarChart2,
-  Briefcase,
-  TrendingUp,
-  MessageCircle,
-  Calculator,
-  Wallet,
-  ArrowLeftRight,
-  Activity,
-  FileText,
-  Trophy,
-  Bitcoin,
+  Zap,
+  BrainCircuit,
+  Repeat2,
   Menu,
   X,
   ChevronLeft,
 } from "lucide-react";
 
 const NAV = [
-  { href: "/",                label: "B3",              Icon: BarChart2,       color: "#22C55E" },
-  { href: "/portfolio-alpha", label: "Portfólio Alpha", Icon: Briefcase,       color: "#60A5FA" },
-  { href: "/rs-analisa",      label: "RS Analisa",      Icon: TrendingUp,      color: "#34D399" },
-  { href: "/chat",            label: "Chat IA",         Icon: MessageCircle,   color: "#A78BFA" },
-  { href: "/simulador",       label: "Simulador",       Icon: Calculator,      color: "#C084FC" },
-  { href: "/carteira",        label: "Carteira",        Icon: Wallet,          color: "#F472B6" },
-  { href: "/comparar",        label: "Comparar",        Icon: ArrowLeftRight,  color: "#FB923C" },
-  { href: "/radar",           label: "Radar",           Icon: Activity,        color: "#F87171" },
-  { href: "/documentos",      label: "Docs CVM",        Icon: FileText,        color: "#38BDF8" },
-  { href: "/ranking",         label: "Ranking",         Icon: Trophy,          color: "#FBBF24" },
-  { href: "/cripto",          label: "Cripto",          Icon: Bitcoin,         color: "#F97316" },
+  {
+    href: "/",
+    label: "Dashboard",
+    Icon: LayoutDashboard,
+    color: "#F7931A",
+    active: (p: string) => p === "/",
+  },
+  {
+    href: "/cripto",
+    label: "Análise",
+    Icon: BarChart2,
+    color: "#3B82F6",
+    active: (p: string) =>
+      p === "/cripto" ||
+      p.startsWith("/cripto/motor") ||
+      p.startsWith("/cripto/charts") ||
+      p.startsWith("/cripto/comparativo"),
+  },
+  {
+    href: "/cripto/sinais",
+    label: "Sinais IA",
+    Icon: Zap,
+    color: "#8B5CF6",
+    active: (p: string) =>
+      p.startsWith("/cripto/sinais") ||
+      p.startsWith("/cripto/rsscore") ||
+      p.startsWith("/cripto/daytrade"),
+  },
+  {
+    href: "/cripto/futures",
+    label: "IA Engine",
+    Icon: BrainCircuit,
+    color: "#10B981",
+    active: (p: string) =>
+      p.startsWith("/cripto/futures") ||
+      p.startsWith("/cripto/ia-analisa") ||
+      p.startsWith("/cripto/backtest"),
+  },
+  {
+    href: "/cripto/trade",
+    label: "Trade",
+    Icon: Repeat2,
+    color: "#F59E0B",
+    active: (p: string) => p.startsWith("/cripto/trade"),
+  },
 ];
 
 export function Header() {
@@ -41,9 +69,7 @@ export function Header() {
   const isHome = pathname === "/";
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const currentNav = NAV.find((n) =>
-    n.href === "/" ? pathname === "/" : pathname.startsWith(n.href)
-  );
+  const currentNav = NAV.find((n) => n.active(pathname));
 
   return (
     <>
@@ -90,13 +116,24 @@ export function Header() {
               className="text-[17px] font-extrabold tracking-tight"
               style={{
                 fontFamily: "var(--font-sora, system-ui)",
-                background: "linear-gradient(135deg, #3B82F6 0%, #06B6D4 100%)",
+                background: "linear-gradient(135deg, #F7931A 0%, #FBBF24 100%)",
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
                 backgroundClip: "text",
               }}
             >
               AllWin
+            </span>
+            <span
+              className="hidden sm:inline text-[10px] font-semibold px-1.5 py-0.5 rounded"
+              style={{
+                background: "rgba(247,147,26,0.12)",
+                border: "1px solid rgba(247,147,26,0.25)",
+                color: "#F7931A",
+                letterSpacing: "0.06em",
+              }}
+            >
+              CRIPTO
             </span>
           </Link>
 
@@ -108,29 +145,26 @@ export function Header() {
 
           {/* Desktop Nav */}
           <nav className="hidden sm:flex items-center gap-0.5 flex-1 overflow-x-auto">
-            {NAV.map(({ href, label, Icon, color }) => {
-              const active =
-                href === "/" ? pathname === "/" : pathname.startsWith(href);
+            {NAV.map(({ href, label, Icon, color, active }) => {
+              const isActive = active(pathname);
               return (
                 <Link
                   key={href}
                   href={href}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12.5px] font-medium transition-all duration-150 whitespace-nowrap no-underline"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] font-medium transition-all duration-150 whitespace-nowrap no-underline"
                   style={{
-                    color: active ? "var(--text-primary)" : "var(--text-muted)",
-                    background: active
-                      ? "rgba(255,255,255,0.06)"
-                      : "transparent",
-                    fontWeight: active ? 600 : 400,
+                    color: isActive ? "var(--text-primary)" : "var(--text-muted)",
+                    background: isActive ? "rgba(255,255,255,0.06)" : "transparent",
+                    fontWeight: isActive ? 600 : 400,
                   }}
                   onMouseEnter={(e) => {
-                    if (!active) {
+                    if (!isActive) {
                       e.currentTarget.style.color = "var(--text-secondary)";
                       e.currentTarget.style.background = "rgba(255,255,255,0.04)";
                     }
                   }}
                   onMouseLeave={(e) => {
-                    if (!active) {
+                    if (!isActive) {
                       e.currentTarget.style.color = "var(--text-muted)";
                       e.currentTarget.style.background = "transparent";
                     }
@@ -138,7 +172,7 @@ export function Header() {
                 >
                   <Icon
                     size={13}
-                    style={{ color: active ? color : "currentColor", flexShrink: 0 }}
+                    style={{ color: isActive ? color : "currentColor", flexShrink: 0 }}
                   />
                   {label}
                 </Link>
@@ -179,7 +213,7 @@ export function Header() {
         </div>
       </header>
 
-      {/* Mobile full-screen drawer */}
+      {/* Mobile drawer */}
       {mobileOpen && (
         <div
           className="sm:hidden fixed inset-0 z-40 overflow-y-auto pt-14"
@@ -187,9 +221,8 @@ export function Header() {
           onClick={() => setMobileOpen(false)}
         >
           <nav className="p-4 flex flex-col gap-1" onClick={(e) => e.stopPropagation()}>
-            {NAV.map(({ href, label, Icon, color }) => {
-              const active =
-                href === "/" ? pathname === "/" : pathname.startsWith(href);
+            {NAV.map(({ href, label, Icon, color, active }) => {
+              const isActive = active(pathname);
               return (
                 <Link
                   key={href}
@@ -197,12 +230,12 @@ export function Header() {
                   onClick={() => setMobileOpen(false)}
                   className="flex items-center gap-3 px-4 py-3 rounded-xl no-underline transition-all duration-150"
                   style={{
-                    background: active ? "var(--primary-glow)" : "transparent",
-                    border: active
-                      ? "1px solid var(--primary-border)"
+                    background: isActive ? "rgba(247,147,26,0.08)" : "transparent",
+                    border: isActive
+                      ? "1px solid rgba(247,147,26,0.2)"
                       : "1px solid transparent",
-                    color: active ? "var(--text-primary)" : "var(--text-secondary)",
-                    fontWeight: active ? 600 : 400,
+                    color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
+                    fontWeight: isActive ? 600 : 400,
                     fontSize: 14,
                   }}
                 >

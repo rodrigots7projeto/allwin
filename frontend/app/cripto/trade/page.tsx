@@ -1,6 +1,8 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 
+import { TradeHubNav } from "@/components/TradeHubNav";
+
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 const KEY_STORE  = "bnb_api_key";
 const SEC_STORE  = "bnb_api_secret";
@@ -720,6 +722,7 @@ export default function TradePage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 pb-10">
+      <TradeHubNav />
 
       {/* ── Setup modal ─────────────────────────────────────────── */}
       {showSetup && (

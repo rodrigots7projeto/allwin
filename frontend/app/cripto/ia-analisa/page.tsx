@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { IAEngineHubNav } from "@/components/IAEngineHubNav";
 import { BrainCircuit, CheckCircle2, XCircle, RotateCcw, Sparkles, TrendingUp, TrendingDown, Minus, Clock, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "https://allwin-backend.up.railway.app/api/v1";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "https://allwin-backend-production.up.railway.app/api/v1";
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -501,6 +502,7 @@ export default function IAAnalisaPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+      <IAEngineHubNav />
 
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">

@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { SinaisHubNav } from "@/components/SinaisHubNav";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
@@ -3281,6 +3282,7 @@ export default function DayTradePage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 pb-12">
+      <SinaisHubNav />
       {infoPerfilCfg && (
         <PerfilInfoModal cfg={infoPerfilCfg} onClose={() => setInfoPerfilId(null)} />
       )}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { AnaliseHubNav } from "@/components/AnaliseHubNav";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
@@ -308,6 +309,7 @@ export default function ChartsPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-4">
+      <AnaliseHubNav />
 
       {/* ── Seletor de moeda ── */}
       <div className="flex flex-wrap gap-1.5">

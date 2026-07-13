@@ -19,9 +19,9 @@ const sora = Sora({
 });
 
 export const metadata: Metadata = {
-  title: "AllWin — Análise e Valuation B3",
+  title: "AllWin — Análise Cripto",
   description:
-    "Plataforma de análise fundamentalista, valuation e IA para investidores do mercado brasileiro.",
+    "Plataforma de análise técnica, sinais IA, paper trading e execução real para criptomoedas.",
 };
 
 export default function RootLayout({

@@ -1,6 +1,8 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 
+import { TradeHubNav } from "@/components/TradeHubNav";
+
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 const KEY_STORE = "bnb_api_key";
 const SEC_STORE = "bnb_api_secret";
@@ -302,6 +304,7 @@ export default function TradeFuturosPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 flex flex-col gap-5">
+      <TradeHubNav />
 
       {/* Header */}
       <div className="flex items-center justify-between">

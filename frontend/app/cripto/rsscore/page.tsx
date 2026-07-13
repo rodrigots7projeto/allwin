@@ -1,6 +1,8 @@
 "use client";
 import { useState, useEffect, useCallback, useRef, memo } from "react";
 
+import { SinaisHubNav } from "@/components/SinaisHubNav";
+
 const FAPI      = "https://fapi.binance.com";
 const CACHE_TTL = 30_000;
 const CACHE_MAX = 120;
@@ -794,6 +796,7 @@ export default function RSScorePage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 pb-16 space-y-5">
+      <SinaisHubNav />
       {/* Header */}
       <div className="pt-4 flex items-start justify-between gap-4 flex-wrap">
         <div>

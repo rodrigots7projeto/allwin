@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { IAEngineHubNav } from "@/components/IAEngineHubNav";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
@@ -570,6 +571,7 @@ export default function BacktestPage() {
   return (
     <>
       <style>{spinStyle}</style>
+      <IAEngineHubNav />
       <div style={{maxWidth:900,margin:"0 auto",padding:"24px 16px 60px",display:"flex",flexDirection:"column",gap:24}}>
 
         {/* ── Header ─────────────────────────────────────────────────────── */}

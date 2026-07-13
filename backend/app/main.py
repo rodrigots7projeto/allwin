@@ -93,30 +93,23 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AllWin — Data Warehouse Financeiro B3",
+    title="AllWin — Cripto Trading Platform",
     description="""
-## AllWin — Plataforma de Análise Fundamentalista
+## AllWin — Plataforma de Análise e Trading de Criptomoedas
 
-### Arquitetura
-- **v1**: Dados em tempo real via brapi.dev (cotação, histórico, valuation, fundamentos)
-- **v2**: Data Warehouse próprio (PostgreSQL) com dados oficiais CVM + B3 + BCB + IBGE
+### Módulos Cripto
+- **Análise**: Indicadores técnicos (RSI, MACD, EMA, Bollinger, ATR, OBV, Fibonacci), sentiment, tokenomics e modelo log-normal
+- **Sinais IA**: Score composto, grade A+/A/B/C, auto-calibração por WR histórico
+- **Futures IA**: Paper trading com 16 carteiras, perfis automáticos, backtest iterativo
+- **Day Trade**: Scanner multi-timeframe com consenso de indicadores
+- **Trade Binance**: Spot e Futuros via API com assinatura HMAC no backend
 
-### Fontes de Dados
-| Fonte | Dados | Frequência |
-|-------|-------|-----------|
-| CVM | DFP, ITR, FRE, Fatos Relevantes | Diário |
-| B3 | Cotações, Proventos, Splits | Diário |
-| BCB | Selic, CDI, IPCA, Câmbio | Diário |
-| IBGE | PIB, Inflação | Mensal/Trimestral |
-
-### Motor de Cálculo
-Todos os indicadores são calculados internamente com fórmulas auditáveis:
-Liquidez · Rentabilidade · Endividamento · Eficiência · Fluxo de Caixa · Mercado
-
-### Modelos de Valuation
-DCF · Graham · Bazin · DDM · Múltiplos · EVA
+### Arquitetura de Segurança
+- Credenciais Binance: armazenadas no frontend (localStorage), enviadas via headers X-Binance-Key / X-Binance-Secret
+- Assinatura HMAC: sempre feita no backend, nunca exposta ao browser
+- API keys próprias (BRAPI, Alpha Vantage, OpenAI): somente em variáveis de ambiente do servidor
     """,
-    version="2.0.0",
+    version="3.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,

@@ -5,6 +5,7 @@ import {
   Area, AreaChart, CartesianGrid, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
 } from "recharts";
+import { AnaliseHubNav } from "@/components/AnaliseHubNav";
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -242,6 +243,7 @@ export default function CriptoPage() {
   return (
     <div className="min-h-screen bg-[var(--bg)]">
       <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        <AnaliseHubNav />
 
         {/* ── Seletor de moeda ── */}
         <div className="flex flex-wrap gap-2 items-center">

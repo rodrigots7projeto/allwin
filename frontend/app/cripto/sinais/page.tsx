@@ -5,6 +5,7 @@ import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer,
   Tooltip,
 } from "recharts";
+import { SinaisHubNav } from "@/components/SinaisHubNav";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
@@ -710,6 +711,7 @@ export default function SinaisPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-4">
+      <SinaisHubNav />
 
       {/* ── Controles ── */}
       <div className="flex flex-wrap items-center gap-3">
