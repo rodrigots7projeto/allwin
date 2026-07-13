@@ -585,7 +585,7 @@ export default function BotSRDPage() {
     for (const coin of selectedCoins) {
       let data: any = null;
       try {
-        const r = await fetch(`${API}/cripto/analysis/${coin.replace("USDT","")}`);
+        const r = await fetch(`${API}/cripto/${coin.replace("USDT","")}`);
         if (!r.ok) continue;
         data = await r.json();
       } catch { continue; }
