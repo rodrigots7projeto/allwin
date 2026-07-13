@@ -12,7 +12,7 @@ import {
 interface FinTrade {
   id: string;
   simbolo: string;
-  category: "sinais" | "futures_ia" | "daytrade" | "futuros" | "scalp" | "bot";
+  category: "sinais" | "futures_ia" | "daytrade" | "futuros" | "scalp" | "bot" | "srd_bot";
   subcategory: string;
   direction: "LONG" | "SHORT";
   pnl_brl: number | null;
@@ -160,6 +160,23 @@ function loadBotWallets(): FinTrade[] {
   } catch { return []; }
 }
 
+function loadSRDBotHist(): FinTrade[] {
+  try {
+    const all: any[] = JSON.parse(localStorage.getItem("allwin_trade_hist") ?? "[]");
+    return all
+      .filter(e => e.source === "srd_bot")
+      .map(e => ({
+        id: e.id, simbolo: e.simbolo, category: "srd_bot" as const,
+        subcategory: e.subcategory ?? "SRD Bot",
+        direction: (e.direction ?? "LONG") as "LONG" | "SHORT",
+        pnl_brl: e.pnl_brl ?? null, pnl_pct: e.pnl_pct ?? null,
+        score: null, leverage: e.leverage ?? null,
+        status: e.status ?? "expirado",
+        registrado_em: e.registrado_em,
+      } satisfies FinTrade));
+  } catch { return []; }
+}
+
 function loadAll(): FinTrade[] {
   if (typeof window === "undefined") return [];
   return [
@@ -168,6 +185,7 @@ function loadAll(): FinTrade[] {
     ...loadDaytradeWallets(),
     ...loadFuturesWallets(),
     ...loadBotWallets(),
+    ...loadSRDBotHist(),
   ].sort((a, b) => new Date(b.registrado_em).getTime() - new Date(a.registrado_em).getTime());
 }
 
@@ -229,8 +247,9 @@ const CATS = [
   { id: "futuros",    label: "Futuros",    color: "#f59e0b", icon: BarChart2 },
   { id: "scalp",      label: "Scalp",      color: "#22d3ee", icon: Zap },
   { id: "bot",        label: "Bots",       color: "#a855f7", icon: Bot },
+  { id: "srd_bot",    label: "BOT SRD",    color: "#10b981", icon: TrendingDown },
   { id: "sinais",     label: "Sinais IA",  color: "#8b5cf6", icon: Target },
-  { id: "futures_ia", label: "Futuros IA", color: "#10b981", icon: Flame },
+  { id: "futures_ia", label: "Futuros IA", color: "#f59e0b", icon: Flame },
 ] as const;
 
 type CatId = typeof CATS[number]["id"];

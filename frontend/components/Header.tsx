@@ -11,6 +11,7 @@ import {
   BrainCircuit,
   Repeat2,
   CheckCircle2,
+  Cpu,
   Menu,
   X,
   ChevronLeft,
@@ -68,6 +69,13 @@ const NAV = [
     Icon: CheckCircle2,
     color: "#06B6D4",
     active: (p: string) => p.startsWith("/cripto/finalizadas"),
+  },
+  {
+    href: "/cripto/bot-srd",
+    label: "BOT SRD",
+    Icon: Cpu,
+    color: "#10B981",
+    active: (p: string) => p.startsWith("/cripto/bot-srd"),
   },
 ];
 
