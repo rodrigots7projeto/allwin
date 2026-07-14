@@ -133,6 +133,35 @@ CREATE TABLE IF NOT EXISTS ft_posicoes (
     INDEX idx_status  (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS cerebro_signals (
+    id              VARCHAR(80)  NOT NULL PRIMARY KEY,
+    simbolo         VARCHAR(20)  NOT NULL,
+    direction       VARCHAR(10)  NOT NULL,
+    source          VARCHAR(50)  NOT NULL,
+    source_perfil   VARCHAR(80),
+    score_final     FLOAT,
+    score_tecnico   FLOAT,
+    score_fluxo     FLOAT,
+    score_contexto  FLOAT,
+    score_fundamental FLOAT,
+    price_entrada   FLOAT,
+    tp_pct          FLOAT,
+    sl_pct          FLOAT,
+    confianca       FLOAT        NOT NULL,
+    aprovado        TINYINT(1)   NOT NULL DEFAULT 0,
+    motivo          TEXT,
+    status          VARCHAR(20)  NOT NULL DEFAULT 'aprovado',
+    pnl_pct         FLOAT,
+    telegram_entry  TINYINT(1)   DEFAULT 0,
+    telegram_exit   TINYINT(1)   DEFAULT 0,
+    registrado_em   DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    fechado_em      DATETIME,
+    INDEX idx_cb_simbolo   (simbolo),
+    INDEX idx_cb_status    (status),
+    INDEX idx_cb_direction (direction),
+    INDEX idx_cb_criado    (registrado_em)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS cripto_alertas (
     id         BIGINT AUTO_INCREMENT PRIMARY KEY,
     simbolo    VARCHAR(20) NOT NULL,
@@ -238,6 +267,24 @@ async def salvar_scan(payload: dict) -> None:
                         await salvar_sinal(s)
     except Exception as e:
         print(f"[MySQL] Erro ao salvar scan: {e}")
+
+
+async def purge_scan_history(days_to_keep: int = 7) -> int:
+    """Remove registros antigos de ft_scan_history. Mantém `days_to_keep` dias."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "DELETE FROM ft_scan_history WHERE criado_em < NOW() - INTERVAL %s DAY",
+                    (days_to_keep,),
+                )
+                deleted = cur.rowcount
+                print(f"[MySQL] purge ft_scan_history: {deleted} linhas removidas (>{days_to_keep}d)")
+                return deleted
+    except Exception as e:
+        print(f"[MySQL] Erro no purge scan_history: {e}")
+        return 0
 
 
 async def ultimo_scan() -> Optional[dict]:
@@ -493,4 +540,88 @@ async def historico_sinais(simbolo: Optional[str] = None, limit: int = 50) -> li
                 return list(rows)
     except Exception as e:
         print(f"[MySQL] Erro ao buscar histórico: {e}")
+        return []
+
+
+# ── CEREBRO ───────────────────────────────────────────────────────────────────
+
+async def cerebro_upsert(signal: dict) -> None:
+    """Salva ou atualiza um sinal do CEREBRO."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    INSERT INTO cerebro_signals
+                      (id, simbolo, direction, source, source_perfil,
+                       score_final, score_tecnico, score_fluxo, score_contexto, score_fundamental,
+                       price_entrada, tp_pct, sl_pct, confianca, aprovado, motivo, status,
+                       pnl_pct, telegram_entry, telegram_exit, registrado_em, fechado_em)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON DUPLICATE KEY UPDATE
+                      status=VALUES(status), pnl_pct=VALUES(pnl_pct),
+                      telegram_exit=VALUES(telegram_exit), fechado_em=VALUES(fechado_em)
+                """, (
+                    signal["id"], signal["simbolo"], signal["direction"],
+                    signal["source"], signal.get("source_perfil"),
+                    signal.get("score_final"), signal.get("score_tecnico"),
+                    signal.get("score_fluxo"), signal.get("score_contexto"),
+                    signal.get("score_fundamental"),
+                    signal.get("price_entrada"), signal.get("tp_pct"), signal.get("sl_pct"),
+                    signal["confianca"], 1 if signal.get("aprovado") else 0,
+                    signal.get("motivo"), signal.get("status", "aprovado"),
+                    signal.get("pnl_pct"),
+                    1 if signal.get("telegram_entry") else 0,
+                    1 if signal.get("telegram_exit") else 0,
+                    signal.get("registrado_em"), signal.get("fechado_em"),
+                ))
+    except Exception as e:
+        print(f"[MySQL] cerebro_upsert erro: {e}")
+
+
+async def cerebro_update_outcome(
+    signal_id: str,
+    status: str,
+    pnl_pct: Optional[float],
+    fechado_em: str,
+    telegram_exit: bool = False,
+) -> None:
+    """Atualiza apenas o resultado de um sinal existente (status, pnl, fechamento)."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    UPDATE cerebro_signals
+                    SET status=%s, pnl_pct=%s, fechado_em=%s, telegram_exit=%s
+                    WHERE id=%s
+                """, (status, pnl_pct, fechado_em, 1 if telegram_exit else 0, signal_id))
+    except Exception as e:
+        print(f"[MySQL] cerebro_update_outcome erro: {e}")
+
+
+async def cerebro_list(limit: int = 500, status: Optional[str] = None) -> list[dict]:
+    """Lista sinais do CEREBRO, mais recentes primeiro."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                if status:
+                    await cur.execute("""
+                        SELECT * FROM cerebro_signals WHERE status=%s
+                        ORDER BY registrado_em DESC LIMIT %s
+                    """, (status, limit))
+                else:
+                    await cur.execute("""
+                        SELECT * FROM cerebro_signals
+                        ORDER BY registrado_em DESC LIMIT %s
+                    """, (limit,))
+                rows = list(await cur.fetchall())
+                for r in rows:
+                    for k in ("registrado_em", "fechado_em"):
+                        if r.get(k):
+                            r[k] = r[k].isoformat()
+                return rows
+    except Exception as e:
+        print(f"[MySQL] cerebro_list erro: {e}")
         return []

@@ -1,12 +1,14 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { TrendingDown, BrainCircuit, FlaskConical } from "lucide-react";
+import { TrendingDown, BrainCircuit, FlaskConical, Zap, Brain } from "lucide-react";
 
 const TABS = [
-  { href: "/cripto/futures",    label: "Carteiras", Icon: TrendingDown,  exact: true },
-  { href: "/cripto/ia-analisa", label: "Perfis IA", Icon: BrainCircuit,  exact: false },
-  { href: "/cripto/backtest",   label: "Backtest",  Icon: FlaskConical,  exact: false },
+  { href: "/cripto/futures",         label: "Carteiras",     Icon: TrendingDown,  exact: true },
+  { href: "/cripto/sinais-futuros",  label: "Sinais Bots",   Icon: Zap,           exact: false },
+  { href: "/cripto/cerebro",         label: "CEREBRO",       Icon: Brain,         exact: false },
+  { href: "/cripto/ia-analisa",      label: "Perfis IA",     Icon: BrainCircuit,  exact: false },
+  { href: "/cripto/backtest",        label: "Backtest",      Icon: FlaskConical,  exact: false },
 ];
 
 export function IAEngineHubNav() {

@@ -25,6 +25,7 @@ from .api.cripto_motor import router as router_cripto_motor
 from .api.cripto_sinais import router as router_cripto_sinais
 from .api.cripto_ia_analisa import router as router_cripto_ia_analisa
 from .api.cripto_wallet import router as router_cripto_wallet
+from .api.cripto_cerebro import router as router_cerebro
 from .config import settings
 
 # Módulos B3/CVM — opcionais (dependem de dados locais e PostgreSQL)
@@ -58,9 +59,10 @@ async def lifespan(app: FastAPI):
 
     # MySQL (Cripto — sinais, scan, histórico, wallets)
     try:
-        from .db.mysql import init_tables
+        from .db.mysql import init_tables, purge_scan_history
         await init_tables()
-        print("[OK] MySQL conectado — tabelas cripto prontas")
+        purged = await purge_scan_history(days_to_keep=7)
+        print(f"[OK] MySQL conectado — tabelas cripto prontas (purge: {purged} linhas)")
     except Exception as e:
         print(f"[AVISO] MySQL indisponivel ({e}) -- persistencia cripto desativada")
 
@@ -80,6 +82,14 @@ async def lifespan(app: FastAPI):
         print("[OK] Bot worker iniciado (30 bots)")
     except Exception as e:
         print(f"[AVISO] Bot worker nao iniciado ({e})")
+
+    # Cerebro monitor — fecha automaticamente sinais que atingiram TP/SL
+    try:
+        from .cripto.cerebro_monitor_worker import cerebro_monitor_loop
+        asyncio.create_task(cerebro_monitor_loop())
+        print("[OK] Cerebro monitor iniciado (verifica TP/SL a cada 60s)")
+    except Exception as e:
+        print(f"[AVISO] Cerebro monitor nao iniciado ({e})")
 
     yield
 
@@ -121,7 +131,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.origins_list,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "DELETE", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -150,6 +160,7 @@ app.include_router(router_cripto_motor,    prefix="/api/v1")
 app.include_router(router_cripto_comp,     prefix="/api/v1")
 app.include_router(router_cripto_ia_analisa, prefix="/api/v1")
 app.include_router(router_cripto_wallet,     prefix="/api/v1")
+app.include_router(router_cerebro,           prefix="/api/v1")
 app.include_router(router_cripto,          prefix="/api/v1")
 
 

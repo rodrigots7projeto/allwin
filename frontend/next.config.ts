@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 
+const RAILWAY_API = "https://allwin-backend-production.up.railway.app/api/v1";
+
 const nextConfig: NextConfig = {
   output: "export",
+  env: {
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || RAILWAY_API,
+  },
   images: {
     unoptimized: true,
     remotePatterns: [

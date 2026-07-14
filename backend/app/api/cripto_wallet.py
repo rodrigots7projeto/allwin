@@ -64,33 +64,30 @@ class WalletSyncIn(BaseModel):
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/cripto/wallets/{tipo}")
-async def get_wallets(tipo: str):
-    """Retorna todas as carteiras do tipo, com trades."""
+async def get_wallets(tipo: str, per_perfil_limit: int = 2000):
+    """Retorna todas as carteiras do tipo.
+    Busca por perfil individualmente para não truncar históricos longos.
+    """
     _check_tipo(tipo)
     wallets = await wallet_load_all(tipo)
-    all_trades = await trades_list(tipo=tipo, limit=2000)
 
-    # Agrupar trades por perfil_id
-    trades_by_perfil: dict[str, list] = {}
-    for t in all_trades:
-        pid = t.get("perfil_id", "")
-        trades_by_perfil.setdefault(pid, []).append(t)
-
-    # Montar resposta no formato que o frontend espera
+    # Busca trades por perfil individualmente — evita que o LIMIT global
+    # corte históricos quando há muitos perfis rodando (ex: 20+ perfis futures).
     result: dict[str, dict] = {}
     for pid, w in wallets.items():
+        trades = await trades_list(perfil_id=pid, tipo=tipo, limit=per_perfil_limit)
         result[pid] = {
             "saldo_inicial": w["saldo_inicial"],
             "saldo_livre":   w["saldo_livre"],
             "positions":     w["positions"],
-            "trades":        trades_by_perfil.get(pid, []),
+            "trades":        trades,
             "criado":        "",
         }
     return result
 
 
 @router.get("/cripto/wallets/{tipo}/trades")
-async def get_trades(tipo: str, perfil_id: Optional[str] = None, limit: int = 500):
+async def get_trades(tipo: str, perfil_id: Optional[str] = None, limit: int = 2000):
     """Lista trades salvos, opcionalmente filtrado por perfil_id."""
     _check_tipo(tipo)
     return await trades_list(perfil_id=perfil_id, tipo=tipo, limit=limit)

@@ -398,6 +398,8 @@ def _calc_dss(m: dict) -> float:
 
 def _champion_dict(perfil: dict, result: dict, dss: float) -> dict:
     m = result.get("metricas", {})
+    # Incluir trades (limitado a 500 para memória) e equity no campeão
+    trades_raw = result.get("trades", [])
     return {
         "perfil_id":     result.get("perfil_id", perfil.get("id")),
         "perfil_nome":   result.get("perfil_nome", perfil.get("nome")),
@@ -405,6 +407,9 @@ def _champion_dict(perfil: dict, result: dict, dss: float) -> dict:
         "dss":           round(dss, 1),
         "metricas":      m,
         "resultado_id":  result.get("id"),
+        "equity":        result.get("equity", []),
+        "trades":        trades_raw[:500] if len(trades_raw) > 500 else trades_raw,
+        "trades_total":  len(trades_raw),
     }
 
 
@@ -428,7 +433,7 @@ async def _run_optimize_bg(task_id: str, req: OptimizeLoopRequest, inicio: datet
         baseline: list[dict] = []
         _baseline_erros: list[str] = []
 
-        for p in PERFIS[:6]:
+        for p in PERFIS:  # testa todos os 16 perfis no baseline
             try:
                 r = await run_backtest(
                     simbolo=req.simbolo.upper(), perfil=p,
@@ -662,6 +667,175 @@ async def deploy_to_futures(req: DeployFuturesRequest):
         "perfil_id": pid,
         "mensagem":  f"Perfil '{futures_profile['nome']}' disponível no Futures",
         "perfil":    futures_profile,
+    }
+
+
+# ── Scan Multi-Símbolo ────────────────────────────────────────────────────────
+
+class MultiScanRequest(BaseModel):
+    simbolos:      list[str] = Field(default=["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT","DOGEUSDT"])
+    perfil_id:     str       = Field("mod_pro", example="mod_pro")
+    data_inicio:   str       = Field(..., example="2024-01-01")
+    data_fim:      str       = Field(..., example="2025-01-01")
+    custo_pct:     float     = Field(0.04, ge=0, le=1)
+    slippage_pct:  float     = Field(0.05, ge=0, le=1)
+    fear_greed:    int       = Field(50, ge=0, le=100)
+    max_simbolos:  int       = Field(8, ge=1, le=15)
+
+
+@router.post("/scan-multi")
+async def scan_multi_simbolo(req: MultiScanRequest):
+    """
+    Executa o mesmo perfil em múltiplos símbolos em paralelo e compara resultados.
+    Útil para encontrar qual ativo responde melhor a uma determinada estratégia.
+    """
+    perfil = get_profile(req.perfil_id)
+    if not perfil:
+        from ..cripto.backtest_store import get_custom_profile
+        perfil = get_custom_profile(req.perfil_id)
+    if not perfil:
+        raise HTTPException(404, f"Perfil '{req.perfil_id}' não encontrado")
+
+    inicio = _parse_date(req.data_inicio)
+    fim    = _parse_date(req.data_fim)
+    if fim <= inicio:
+        raise HTTPException(400, "data_fim deve ser posterior a data_inicio")
+    if (fim - inicio).days < 30:
+        raise HTTPException(400, "Período mínimo de 30 dias")
+
+    simbolos = [s.upper() for s in req.simbolos[:req.max_simbolos]]
+
+    async def _test_one(sym: str):
+        try:
+            r = await run_backtest(
+                simbolo=sym, perfil=perfil,
+                data_inicio=inicio, data_fim=fim,
+                custo_pct=req.custo_pct, slippage_pct=req.slippage_pct,
+                fear_greed=req.fear_greed,
+            )
+            if "erro" in r:
+                return {"simbolo": sym, "erro": r["erro"]}
+            m = r.get("metricas", {})
+            dss = _calc_dss(m)
+            return {
+                "simbolo":       sym,
+                "dss":           round(dss, 1),
+                "win_rate":      m.get("win_rate", 0),
+                "profit_factor": round(m.get("profit_factor", 0), 3),
+                "retorno_total": round(m.get("retorno_total", 0), 2),
+                "max_drawdown":  round(m.get("max_drawdown", 0), 2),
+                "total_trades":  m.get("total_trades", 0),
+                "sharpe":        round(m.get("sharpe", 0), 3),
+                "sortino":       round(m.get("sortino", 0), 3),
+                "cagr":          round(m.get("cagr", 0), 2),
+                "expectancia":   round(m.get("expectancia", 0), 2),
+                "equity":        r.get("equity", []),
+            }
+        except Exception as exc:
+            return {"simbolo": sym, "erro": str(exc)[:200]}
+
+    import asyncio as _asyncio
+    resultados = await _asyncio.gather(*[_test_one(s) for s in simbolos])
+    resultados_list = list(resultados)
+
+    # Ordenar por DSS (símbolos com erro ficam no final)
+    ok   = [r for r in resultados_list if "erro" not in r]
+    errs = [r for r in resultados_list if "erro" in r]
+    ok.sort(key=lambda x: x.get("dss", 0), reverse=True)
+
+    return {
+        "perfil_id":   req.perfil_id,
+        "perfil_nome": perfil.get("nome"),
+        "periodo": {
+            "inicio": inicio.date().isoformat(),
+            "fim":    fim.date().isoformat(),
+            "dias":   (fim - inicio).days,
+        },
+        "resultados":  ok + errs,
+        "melhor":      ok[0] if ok else None,
+        "total_ok":    len(ok),
+        "total_erro":  len(errs),
+    }
+
+
+# ── Comparar todos os perfis em um símbolo ───────────────────────────────────
+
+class CompareProfilesRequest(BaseModel):
+    simbolo:      str   = Field("BTCUSDT")
+    data_inicio:  str   = Field(..., example="2024-01-01")
+    data_fim:     str   = Field(..., example="2025-01-01")
+    custo_pct:    float = Field(0.04, ge=0, le=1)
+    slippage_pct: float = Field(0.05, ge=0, le=1)
+    fear_greed:   int   = Field(50, ge=0, le=100)
+
+
+@router.post("/compare-profiles")
+async def compare_all_profiles(req: CompareProfilesRequest):
+    """
+    Roda todos os 16 perfis builtin no mesmo símbolo e período.
+    Retorna ranking completo com métricas de cada um.
+    """
+    inicio = _parse_date(req.data_inicio)
+    fim    = _parse_date(req.data_fim)
+    if fim <= inicio:
+        raise HTTPException(400, "data_fim deve ser posterior a data_inicio")
+    if (fim - inicio).days < 30:
+        raise HTTPException(400, "Período mínimo de 30 dias")
+
+    import asyncio as _asyncio
+
+    async def _test_perfil(p: dict):
+        try:
+            r = await run_backtest(
+                simbolo=req.simbolo.upper(), perfil=p,
+                data_inicio=inicio, data_fim=fim,
+                custo_pct=req.custo_pct, slippage_pct=req.slippage_pct,
+                fear_greed=req.fear_greed,
+            )
+            if "erro" in r:
+                return {"id": p["id"], "nome": p["nome"], "erro": r["erro"]}
+            m = r.get("metricas", {})
+            dss = _calc_dss(m)
+            return {
+                "id":            p["id"],
+                "nome":          p["nome"],
+                "dss":           round(dss, 1),
+                "win_rate":      m.get("win_rate", 0),
+                "profit_factor": round(m.get("profit_factor", 0), 3),
+                "retorno_total": round(m.get("retorno_total", 0), 2),
+                "max_drawdown":  round(m.get("max_drawdown", 0), 2),
+                "total_trades":  m.get("total_trades", 0),
+                "sharpe":        round(m.get("sharpe", 0), 3),
+                "sortino":       round(m.get("sortino", 0), 3),
+                "cagr":          round(m.get("cagr", 0), 2),
+                "expectancia":   round(m.get("expectancia", 0), 2),
+                "equity":        r.get("equity", []),
+                "aguardar_ok":   bool(p.get("aguardar_ok", False)),
+                "apenas_aguardar": bool(p.get("apenas_aguardar", False)),
+                "score_compra":  p.get("score_compra"),
+                "sl_pct":        p.get("sl_pct"),
+                "tp_pct":        p.get("tp_pct"),
+            }
+        except Exception as exc:
+            return {"id": p["id"], "nome": p["nome"], "erro": str(exc)[:200]}
+
+    resultados = await _asyncio.gather(*[_test_perfil(p) for p in PERFIS])
+    resultados_list = list(resultados)
+
+    ok   = [r for r in resultados_list if "erro" not in r]
+    errs = [r for r in resultados_list if "erro" in r]
+    ok.sort(key=lambda x: x.get("dss", 0), reverse=True)
+
+    return {
+        "simbolo": req.simbolo.upper(),
+        "periodo": {
+            "inicio": inicio.date().isoformat(),
+            "fim":    fim.date().isoformat(),
+            "dias":   (fim - inicio).days,
+        },
+        "ranking": ok + errs,
+        "campeao": ok[0] if ok else None,
+        "total_ok": len(ok),
     }
 
 

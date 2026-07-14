@@ -762,6 +762,7 @@ function useBotWallets(scan: FuturesScanData | null) {
     } catch {}
     return emptyAllBotWallets();
   });
+  const localBotRef = useRef(botWallets);
 
   // Carrega wallets do MySQL no mount — backend opera 24/7 mesmo com browser fechado
   useEffect(() => {
@@ -782,11 +783,16 @@ function useBotWallets(scan: FuturesScanData | null) {
             ? { score_min_adj: learnedRaw.score_min_adj ?? 0, stake_mult: learnedRaw.stake_mult ?? 1, generation: learnedRaw.trades_avaliados ? Math.floor(learnedRaw.trades_avaliados / 10) : 0, log: [] }
             : emptyBotLearned();
           const positions = Object.fromEntries(Object.entries(w.positions ?? {}).filter(([k]) => k !== "_learned")) as Record<string, FuturesPos>;
+          // Merge trades: mantém localStorage + acrescenta do backend o que falta
+          const localTrades: FuturesTrade[] = localBotRef.current[bid]?.trades ?? [];
+          const backendTrades: FuturesTrade[] = Array.isArray(w.trades) ? w.trades : [];
+          const localIds = new Set(localTrades.map(t => t.id));
+          const onlyInBackend = backendTrades.filter(t => !localIds.has(t.id));
           merged[bid] = {
             ...merged[bid],
             saldo_livre: w.saldo_livre ?? merged[bid].saldo_livre,
             positions,
-            trades: Array.isArray(w.trades) ? w.trades : [],
+            trades: [...localTrades, ...onlyInBackend].sort((a, b) => (a.time ?? 0) - (b.time ?? 0)),
             learned,
           };
         }
@@ -880,17 +886,25 @@ function useFuturesWallet() {
           _pushFuturesLocalToBackend(localSnapshot);
           return;
         }
-        // Backend tem trades/posições reais → usar como source of truth
+        // Backend tem trades/posições reais → merge com localStorage (nunca truncar)
+        // Backend é autoritativo para saldo/posições abertas.
+        // Para trades: mantém tudo do localStorage e acrescenta os do backend que não existem lá.
         const merged = { ...emptyMultiFutures() };
         for (const [pid, w] of Object.entries(data)) {
-          if (merged[pid]) {
-            merged[pid] = {
-              ...merged[pid],
-              saldo_livre: w.saldo_livre ?? merged[pid].saldo_livre,
-              positions:   w.positions   ?? {},
-              trades:      Array.isArray(w.trades) ? w.trades : [],
-            };
-          }
+          if (!merged[pid]) continue;
+          const localTrades: FuturesTrade[] = localSnapshot[pid]?.trades ?? [];
+          const backendTrades: FuturesTrade[] = Array.isArray(w.trades) ? w.trades : [];
+          // Merge: local tem prioridade, acrescenta do backend o que não está no local
+          const localIds = new Set(localTrades.map(t => t.id));
+          const onlyInBackend = backendTrades.filter(t => !localIds.has(t.id));
+          const allTrades = [...localTrades, ...onlyInBackend]
+            .sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
+          merged[pid] = {
+            ...merged[pid],
+            saldo_livre: w.saldo_livre ?? merged[pid].saldo_livre,
+            positions:   w.positions   ?? {},
+            trades:      allTrades,
+          };
         }
         setWallets(merged);
         try { localStorage.setItem(FUT_WALLET_KEY, JSON.stringify(merged)); } catch {}
@@ -899,7 +913,29 @@ function useFuturesWallet() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const persist = (next: Record<string, FuturesWallet>) => {
-    try { localStorage.setItem(FUT_WALLET_KEY, JSON.stringify(next)); } catch {}
+    // Tenta salvar o estado completo. Se falhar por quota, trimma progressivamente.
+    // Trades completos ficam no MySQL via _syncTrade — localStorage é só cache de sessão.
+    const trySet = (data: Record<string, FuturesWallet>) => {
+      try {
+        localStorage.setItem(FUT_WALLET_KEY, JSON.stringify(data));
+        return true;
+      } catch { return false; }
+    };
+    if (!trySet(next)) {
+      // Quota excedida: trimma para os últimos 200 trades por perfil e tenta de novo
+      const trimmed: Record<string, FuturesWallet> = {};
+      for (const [k, w] of Object.entries(next)) {
+        trimmed[k] = { ...w, trades: w.trades.slice(-200) };
+      }
+      if (!trySet(trimmed)) {
+        // Ainda falhou: apenas posições abertas + últimos 50
+        const minimal: Record<string, FuturesWallet> = {};
+        for (const [k, w] of Object.entries(next)) {
+          minimal[k] = { ...w, trades: w.trades.slice(-50) };
+        }
+        trySet(minimal);
+      }
+    }
     return next;
   };
   const upd = (fn: (p: Record<string, FuturesWallet>) => Record<string, FuturesWallet>) =>
@@ -1946,7 +1982,7 @@ interface FuturesSignal {
   score: number; grade: string; preco_brl: number;
   dir_conf: number; n_perfis: number; perfis_nomes: string[];
   ia_conf: number; funding_class?: string; oi_change_pct?: number; var24h?: number;
-  leverage: 2 | 5 | 10 | 20; leverage_reason: string;
+  leverage: 1 | 2 | 5 | 10 | 20; leverage_reason: string;
   timing: "AGORA" | "EM BREVE" | "AGUARDAR"; timing_reason: string;
   sl_pct: number; tp_pct: number;
 }
@@ -1982,6 +2018,20 @@ function saveFutIAHist(items: FutIAHistItem[]): void {
     const others = all.filter((e: FutIAHistItem & { source: string }) => e.source !== "futures_ia");
     localStorage.setItem(TRADE_HIST_KEY, JSON.stringify([...others, ...items.map(i => ({ ...i, source: "futures_ia" }))]));
   } catch {}
+}
+// Carrega histórico filtrado pela aba (ia vs ia_tiro)
+function loadTabFilteredHist(tabKey?: string): FutIAHistItem[] {
+  const all = loadFutIAHist();
+  if (tabKey === "ia_tiro") return all.filter(h => h.id.startsWith("ia_tiro_"));
+  return all.filter(h => !h.id.startsWith("ia_tiro_"));
+}
+// Salva histórico da aba preservando entradas da outra aba
+function saveTabHist(items: FutIAHistItem[], tabKey?: string): void {
+  const all = loadFutIAHist();
+  const others = tabKey === "ia_tiro"
+    ? all.filter(h => !h.id.startsWith("ia_tiro_"))
+    : all.filter(h =>  h.id.startsWith("ia_tiro_"));
+  saveFutIAHist([...items, ...others]);
 }
 function calcFutIAStatus(item: FutIAHistItem): FutIAHistItem["status"] {
   if (item.status !== "aberto") return item.status;
@@ -2144,11 +2194,11 @@ function gerarSinaisIA(scan: FuturesScanData, wallets: Record<string, FuturesWal
 
     // Limiar por direção: bloqueia direção com WR ruim, libera direção com WR boa
     let dirMinConf = cal.minIAConf;
-    if (it.direction === "LONG"  && cal.wrLong  !== null && cal.wrLong  < 44) dirMinConf = Math.max(dirMinConf, 70);
-    if (it.direction === "SHORT" && cal.wrShort !== null && cal.wrShort < 44) dirMinConf = Math.max(dirMinConf, 70);
-    // Bônus: se SHORT tem WR ≥51%, reduz o limiar para SHORT
-    if (it.direction === "SHORT" && cal.wrShort !== null && cal.wrShort >= 51) dirMinConf = Math.min(dirMinConf, 38);
-    if (it.direction === "LONG"  && cal.wrLong  !== null && cal.wrLong  >= 51) dirMinConf = Math.min(dirMinConf, 38);
+    if (it.direction === "LONG"  && cal.wrLong  !== null && cal.wrLong  < 38) dirMinConf = Math.max(dirMinConf, 70);
+    if (it.direction === "SHORT" && cal.wrShort !== null && cal.wrShort < 38) dirMinConf = Math.max(dirMinConf, 70);
+    // Bônus: se direção tem WR ≥45% (meta atingida), reduz limiar de confiança
+    if (it.direction === "SHORT" && cal.wrShort !== null && cal.wrShort >= 45) dirMinConf = Math.min(dirMinConf, 38);
+    if (it.direction === "LONG"  && cal.wrLong  !== null && cal.wrLong  >= 45) dirMinConf = Math.min(dirMinConf, 38);
 
     // Descartar sinal se confiança abaixo do limiar calibrado
     if (finalConf < dirMinConf) continue;
@@ -2156,14 +2206,16 @@ function gerarSinaisIA(scan: FuturesScanData, wallets: Record<string, FuturesWal
     // ── Leverage: conservador quando WR histórico é ruim ────────────────────
     const histWR = learnScore ?? learnDir ?? null;
     const histOk = histWR === null || histWR >= 50;
-    let leverage: 2 | 5 | 10 | 20 = 2;
-    let leverage_reason = "Alavancagem mínima — calibração ativa";
+    let leverage: 1 | 2 | 5 | 10 | 20 = 1;
+    let leverage_reason = "Sinal fraco — alavancagem mínima 1x";
     if (finalConf >= 82 && it.score_final >= 75 && it.grade === "A+" && histOk) {
       leverage = 20; leverage_reason = `Score ${it.score_final.toFixed(0)} + Conf IA ${finalConf.toFixed(0)}% + Grade A+${histWR ? ` + Win ${histWR.toFixed(0)}%` : ""} → máxima oportunidade`;
     } else if (finalConf >= 72 && it.score_final >= 65 && (it.grade === "A+" || it.grade === "A") && (histWR === null || histWR >= 55)) {
       leverage = 10; leverage_reason = `Score ${it.score_final.toFixed(0)} + Conf IA ${finalConf.toFixed(0)}% + Grade ${it.grade}${histWR ? ` + Win ${histWR.toFixed(0)}%` : ""} → alta oportunidade`;
     } else if (finalConf >= 62 && it.score_final >= 55 && it.grade !== "C" && (histWR === null || histWR >= 52)) {
       leverage = 5; leverage_reason = `Score ${it.score_final.toFixed(0)} + Conf IA ${finalConf.toFixed(0)}% → boa oportunidade`;
+    } else if (finalConf >= 50 && it.score_final >= 45) {
+      leverage = 2; leverage_reason = `Score ${it.score_final.toFixed(0)} + Conf IA ${finalConf.toFixed(0)}% → alavancagem conservadora`;
     }
 
     // ── Timing ─────────────────────────────────────────────────────────────
@@ -2317,7 +2369,7 @@ function SignalCard({ s, learn, onRegistrar, jaRegistrado }: { s: FuturesSignal;
       })()}
 
       {/* Metrics */}
-      <div className="grid grid-cols-3 gap-2 px-4 pb-3">
+      <div className="grid grid-cols-4 gap-1.5 px-4 pb-3">
         <div className="rounded-lg p-2 text-center" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
           <div className="text-[8px]" style={{ color: "var(--text-muted)" }}>Score</div>
           <div className="font-black text-sm" style={{ color: s.score >= 70 ? "#10b981" : s.score >= 55 ? "#f59e0b" : "#ef4444" }}>{s.score.toFixed(0)}</div>
@@ -2330,6 +2382,12 @@ function SignalCard({ s, learn, onRegistrar, jaRegistrado }: { s: FuturesSignal;
           <div className="text-[8px]" style={{ color: "var(--text-muted)" }}>Win Hist.</div>
           <div className="font-black text-sm" style={{ color: histWR !== null && histWR >= 50 ? "#10b981" : histWR !== null ? "#ef4444" : "var(--text-muted)" }}>
             {histWR !== null ? `${histWR.toFixed(0)}%` : dirWR !== null ? `${dirWR.toFixed(0)}%` : "—"}
+          </div>
+        </div>
+        <div className="rounded-lg p-2 text-center" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
+          <div className="text-[8px]" style={{ color: "var(--text-muted)" }}>R:R</div>
+          <div className="font-black text-sm" style={{ color: s.tp_pct / s.sl_pct >= 2 ? "#10b981" : s.tp_pct / s.sl_pct >= 1.5 ? "#f59e0b" : "#ef4444" }}>
+            1:{(s.tp_pct / s.sl_pct).toFixed(1)}
           </div>
         </div>
       </div>
@@ -2384,14 +2442,21 @@ function SignalCard({ s, learn, onRegistrar, jaRegistrado }: { s: FuturesSignal;
 
 // ── IA Sinais View (3 painéis) ────────────────────────────────────────────────
 
-function FuturesIASinaisView({ scan, wallets, autoTrade, setAutoTrade }:
-  { scan: FuturesScanData | null; wallets: Record<string, FuturesWallet>; autoTrade: boolean; setAutoTrade: (v: boolean) => void }) {
+function FuturesIASinaisView({ scan, wallets, autoTrade, setAutoTrade, tpMin, tpMax, slFixed, leverMin, leverMax, tabKey }:
+  { scan: FuturesScanData | null; wallets: Record<string, FuturesWallet>; autoTrade: boolean; setAutoTrade: (v: boolean) => void;
+    tpMin?: number; tpMax?: number; slFixed?: number; leverMin?: number; leverMax?: number; tabKey?: string }) {
+  // IA Análise = 45% · IA Tiro Curto = 50%
+  const WR_GATE = tabKey === "ia_tiro" ? 50 : 45;
+  // tpMin/tpMax/slFixed: quando definidos, sobrescrevem os parâmetros de TP/SL do sinal (modo Tiro Curto)
 
   const [modo, setModo]         = useState<"sinais" | "aprendizado" | "historico">("sinais");
   const [historico, setHistorico] = useState<FutIAHistItem[]>([]);
   const [registrado, setRegistrado] = useState<string | null>(null);
+  const [autoLog, setAutoLog]   = useState<string[]>([]);
+  // Chaves já auto-registradas nesta sessão: evita duplicatas entre updates do scan
+  const autoRegistered          = useRef<Set<string>>(new Set());
 
-  useEffect(() => { setHistorico(loadFutIAHist()); }, []);
+  useEffect(() => { setHistorico(loadTabFilteredHist(tabKey)); }, []);
 
   const sinais   = scan ? gerarSinaisIA(scan, wallets) : [];
   const learn    = computeLearnStats(wallets);
@@ -2406,27 +2471,79 @@ function FuturesIASinaisView({ scan, wallets, autoTrade, setAutoTrade }:
     ...(["LONG","SHORT"] as const).map(dir => ({ label: dir, wr: learn.wr(learn.byDir[dir]), ops: learn.byDir[dir].w + learn.byDir[dir].l })),
   ].filter(r => r.ops > 0);
 
-  const registrar = (s: FuturesSignal) => {
-    const isLong = s.direction === "LONG";
-    const entry  = s.preco_brl;
-    const sl     = isLong ? entry * (1 - s.sl_pct) : entry * (1 + s.sl_pct);
-    const tp     = isLong ? entry * (1 + s.tp_pct) : entry * (1 - s.tp_pct);
+  const registrar = useCallback((s: FuturesSignal, isAuto = false) => {
+    const isLong  = s.direction === "LONG";
+    const entry   = s.preco_brl;
+    // SL fixo; TP 1%–2% por confiança; leverage 5x–15x por confiança (Tiro Curto)
+    const useSl   = slFixed ?? s.sl_pct;
+    const confT   = Math.min(1, Math.max(0, (s.ia_conf - 60) / 30));
+    const useTp   = (tpMin != null && tpMax != null)
+      ? tpMin + (tpMax - tpMin) * confT
+      : s.tp_pct;
+    const useLever = (leverMin != null && leverMax != null)
+      ? Math.round(leverMin + (leverMax - leverMin) * confT)
+      : s.leverage;
+    const sl      = isLong ? entry * (1 - useSl) : entry * (1 + useSl);
+    const tp      = isLong ? entry * (1 + useTp) : entry * (1 - useTp);
     const item: FutIAHistItem = {
-      id: `${s.simbolo}_${s.direction}_${Date.now()}`,
+      id: `${tabKey ?? "ia"}_${s.simbolo}_${s.direction}_${Date.now()}`,
       simbolo: s.simbolo, direction: s.direction,
-      score: s.score, ia_conf: s.ia_conf, leverage: s.leverage,
-      preco_entrada: entry, sl, tp, sl_pct: s.sl_pct, tp_pct: s.tp_pct,
+      score: s.score, ia_conf: s.ia_conf, leverage: useLever,
+      preco_entrada: entry, sl, tp, sl_pct: useSl, tp_pct: useTp,
       registrado_em: new Date().toISOString(), status: "aberto",
     };
-    const updated = [item, ...historico];
-    setHistorico(updated); saveFutIAHist(updated);
-    setRegistrado(s.simbolo + s.direction);
-    setTimeout(() => setRegistrado(null), 2500);
-  };
+    setHistorico(prev => { const u = [item, ...prev]; saveTabHist(u, tabKey); return u; });
+    if (isAuto) {
+      const msg = `🤖 ${s.direction} ${s.simbolo.replace("USDT","")} ${useLever}x · Conf ${s.ia_conf}% · @ R$${entry.toFixed(2)}`;
+      setAutoLog(prev => [msg, ...prev].slice(0, 20));
+    } else {
+      setRegistrado(s.simbolo + s.direction);
+      setTimeout(() => setRegistrado(null), 2500);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slFixed, tpMin, tpMax, leverMin, leverMax, tabKey]);
+
+  // ── Auto-execução de entradas quando Auto Trade está ON ───────────────────────
+  // Gate de direção: usa a direção REAL do scan (direction + direction_confidence), não WR histórico
+  useEffect(() => {
+    if (!autoTrade || sinais.length === 0) return;
+    for (const s of sinais) {
+      // Bloqueia apenas sinais AGUARDAR; executa AGORA e EM BREVE
+      if (s.timing === "AGUARDAR") continue;
+
+      // ── Requisitos mínimos obrigatórios ──────────────────────────────────────
+      // 1. Confiança IA > 60%
+      if (s.ia_conf <= 60) continue;
+      // 2. R:R >= 2.5 usando parâmetros efetivos (override Tiro Curto)
+      const confT   = Math.min(1, Math.max(0, (s.ia_conf - 60) / 30));
+      const effSl   = slFixed ?? s.sl_pct;
+      const effTp   = (tpMin != null && tpMax != null) ? tpMin + (tpMax - tpMin) * confT : s.tp_pct;
+      const rr = effSl > 0 ? effTp / effSl : 0;
+      if (rr < 2.5) continue;
+      // 3. Direção do scan ≥ 70% na direção do sinal
+      if (scan) {
+        const sym = s.simbolo.replace("USDT", "");
+        const coinData = scan.geral.find(c => c.simbolo.replace("USDT", "") === sym);
+        if (!coinData) continue;
+        if (coinData.direction !== s.direction) continue;
+        if (coinData.direction_confidence < 70) continue;
+      }
+
+      const key = `${s.simbolo}_${s.direction}_${Math.floor(s.score)}`;
+      if (autoRegistered.current.has(key)) continue;
+      // Verifica se já existe entrada aberta para este símbolo+direção (filtrado pela aba)
+      const hist = loadTabFilteredHist(tabKey);
+      const jaAberto = hist.some(h => h.simbolo === s.simbolo && h.direction === s.direction && h.status === "aberto");
+      if (jaAberto) { autoRegistered.current.add(key); continue; }
+      autoRegistered.current.add(key);
+      registrar(s, true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sinais, autoTrade, scan]);
 
   const removeHist = (id: string) => {
     const upd = historico.filter(h => h.id !== id);
-    setHistorico(upd); saveFutIAHist(upd);
+    setHistorico(upd); saveTabHist(upd, tabKey);
   };
 
   const verificarHist = async (id: string) => {
@@ -2443,7 +2560,7 @@ function FuturesIASinaisView({ scan, wallets, autoTrade, setAutoTrade }:
         p.status = calcFutIAStatus(p);
         return p;
       });
-      setHistorico(upd); saveFutIAHist(upd);
+      setHistorico(upd); saveTabHist(upd, tabKey);
     } catch { /* ignore */ }
   };
 
@@ -2473,17 +2590,224 @@ function FuturesIASinaisView({ scan, wallets, autoTrade, setAutoTrade }:
       {modo === "sinais" && (
         <div className="flex flex-col gap-4">
 
-          {/* Auto trade banner */}
-          {!autoTrade && (
-            <div className="flex items-center justify-between gap-3 p-3 rounded-xl"
-              style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)" }}>
-              <span className="text-xs font-bold" style={{ color: "#ef4444" }}>⚠️ Auto Trade DESLIGADO — sinais não serão executados automaticamente</span>
-              <button onClick={() => setAutoTrade(true)} className="px-3 py-1.5 rounded-xl text-xs font-bold shrink-0"
-                style={{ background: "rgba(16,185,129,0.2)", color: "#10b981", border: "1px solid rgba(16,185,129,0.4)" }}>
-                Ligar Auto Trade
-              </button>
+          {/* ── Auto Trade toggle — sempre visível ── */}
+          <div className="flex items-center justify-between gap-3 p-3 rounded-xl"
+            style={{
+              background: autoTrade ? "rgba(16,185,129,0.08)" : "rgba(239,68,68,0.06)",
+              border: `1px solid ${autoTrade ? "rgba(16,185,129,0.35)" : "rgba(239,68,68,0.3)"}`,
+            }}>
+            <div className="flex flex-col gap-0.5 min-w-0">
+              <span className="text-xs font-bold" style={{ color: autoTrade ? "#10b981" : "#ef4444" }}>
+                {autoTrade ? "🤖 Auto Trade LIGADO — entradas executadas automaticamente pela IA" : "⚠️ Auto Trade DESLIGADO — sinais não serão executados automaticamente"}
+              </span>
+              {autoTrade && autoLog.length > 0 && (
+                <span className="text-[10px] truncate" style={{ color: "var(--text-muted)" }}>{autoLog[0]}</span>
+              )}
             </div>
-          )}
+            <button onClick={() => setAutoTrade(!autoTrade)}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold shrink-0 transition-all"
+              style={{
+                background: autoTrade ? "rgba(16,185,129,0.2)" : "rgba(239,68,68,0.15)",
+                color: autoTrade ? "#10b981" : "#ef4444",
+                border: `1px solid ${autoTrade ? "rgba(16,185,129,0.5)" : "rgba(239,68,68,0.4)"}`,
+              }}>
+              <span className={`w-2 h-2 rounded-full ${autoTrade ? "bg-emerald-400 animate-pulse" : "bg-red-400"}`} />
+              {autoTrade ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          {/* ── Quadro de Entradas Aprovadas ── */}
+          <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+            <div className="flex items-center gap-2 px-3 py-2"
+              style={{ background: "rgba(139,92,246,0.1)", borderBottom: "1px solid var(--border)" }}>
+              <span className="text-[11px] font-black" style={{ color: "#a78bfa" }}>✅ Quadro de Entradas Aprovadas</span>
+              <span className="text-[9px] ml-auto" style={{ color: "var(--text-muted)" }}>Req: Direção ≥ 70% no scan</span>
+            </div>
+            <div className="grid grid-cols-2 divide-x" style={{ borderColor: "var(--border)" }}>
+              {/* LONG */}
+              {(() => {
+                const longCoins = scan?.geral.filter(c => c.direction === "LONG" && c.direction_confidence >= 70) ?? [];
+                const aprovL = !scan || longCoins.length > 0;
+                const topConf = longCoins.length > 0 ? Math.max(...longCoins.map(c => c.direction_confidence)) : 0;
+                return (
+                  <div className="p-3 flex flex-col gap-1"
+                    style={{ background: aprovL ? "rgba(16,185,129,0.06)" : "rgba(239,68,68,0.04)" }}>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-black" style={{ color: aprovL ? "#10b981" : "#6b7280" }}>▲ LONG</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold"
+                        style={{
+                          background: aprovL ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.12)",
+                          color: aprovL ? "#10b981" : "#ef4444",
+                          border: `1px solid ${aprovL ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.25)"}`,
+                        }}>
+                        {aprovL ? "✅ LIBERADO" : "🔒 BLOQUEADO"}
+                      </span>
+                    </div>
+                    <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                      {aprovL
+                        ? <><span className="font-bold" style={{ color: "#10b981" }}>{longCoins.length} ativo{longCoins.length !== 1 ? "s" : ""}</span> em LONG · maior conf: <span className="font-bold" style={{ color: "#10b981" }}>{topConf}%</span></>
+                        : <span style={{ color: "#ef4444" }}>Nenhum ativo com LONG ≥70% no scan</span>
+                      }
+                    </div>
+                  </div>
+                );
+              })()}
+              {/* SHORT */}
+              {(() => {
+                const shortCoins = scan?.geral.filter(c => c.direction === "SHORT" && c.direction_confidence >= 70) ?? [];
+                const aprovS = !scan || shortCoins.length > 0;
+                const topConf = shortCoins.length > 0 ? Math.max(...shortCoins.map(c => c.direction_confidence)) : 0;
+                return (
+                  <div className="p-3 flex flex-col gap-1"
+                    style={{ background: aprovS ? "rgba(239,68,68,0.06)" : "rgba(107,114,128,0.04)" }}>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-black" style={{ color: aprovS ? "#ef4444" : "#6b7280" }}>▼ SHORT</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold"
+                        style={{
+                          background: aprovS ? "rgba(239,68,68,0.15)" : "rgba(107,114,128,0.12)",
+                          color: aprovS ? "#ef4444" : "#6b7280",
+                          border: `1px solid ${aprovS ? "rgba(239,68,68,0.3)" : "rgba(107,114,128,0.2)"}`,
+                        }}>
+                        {aprovS ? "✅ LIBERADO" : "🔒 BLOQUEADO"}
+                      </span>
+                    </div>
+                    <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                      {aprovS
+                        ? <><span className="font-bold" style={{ color: "#ef4444" }}>{shortCoins.length} ativo{shortCoins.length !== 1 ? "s" : ""}</span> em SHORT · maior conf: <span className="font-bold" style={{ color: "#ef4444" }}>{topConf}%</span></>
+                        : <span style={{ color: "#6b7280" }}>Nenhum ativo com SHORT ≥70% no scan</span>
+                      }
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+            {/* Feed de entradas automáticas aprovadas */}
+            {autoLog.length > 0 && (
+              <div className="border-t px-3 py-2 flex flex-col gap-1" style={{ borderColor: "var(--border)" }}>
+                <div className="text-[9px] font-bold mb-0.5" style={{ color: "var(--text-muted)" }}>Entradas executadas (sessão atual)</div>
+                {autoLog.slice(0,4).map((l, i) => (
+                  <div key={i} className="text-[10px] font-mono" style={{ color: "#10b981" }}>{l}</div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Quadro Em Operação ── estilo tabela histórico ── */}
+          {(() => {
+            const abertas = historico.filter(h => h.status === "aberto");
+            if (abertas.length === 0) return null;
+
+            const rows = abertas.map(h => {
+              const rr     = h.sl_pct > 0 ? h.tp_pct / h.sl_pct : 0;
+              const okConf = h.ia_conf > 60;
+              const okRR   = rr >= 2.5;
+              // Direção do scan: coin deve ter direção ≥70% alinhada com a posição
+              const sym = h.simbolo.replace("USDT", "");
+              const coinData = scan?.geral.find(c => c.simbolo.replace("USDT", "") === sym);
+              const okDir  = !scan || !coinData || (coinData.direction === h.direction && coinData.direction_confidence >= 70);
+              const aprovada = okConf && okRR && okDir;
+              const isLong   = h.direction === "LONG";
+              const dirC     = isLong ? "#10b981" : "#ef4444";
+
+              let pctAtual: number | null = null;
+              if (h.preco_atual) {
+                pctAtual = isLong
+                  ? (h.preco_atual - h.preco_entrada) / h.preco_entrada * 100
+                  : (h.preco_entrada - h.preco_atual) / h.preco_entrada * 100;
+              }
+
+              const motivo = `${isLong ? "LONG" : "SHORT"} · TP +${(h.tp_pct*100).toFixed(1)}% · SL −${(h.sl_pct*100).toFixed(1)}% · R:R 1:${rr.toFixed(1)}`;
+              return { h, rr, okConf, okRR, okDir, aprovada, isLong, dirC, pctAtual, motivo };
+            });
+
+            const aprov = rows.filter(r => r.aprovada).length;
+
+            return (
+              <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+                {/* Header */}
+                <div className="flex items-center gap-2 px-3 py-2"
+                  style={{ background: "rgba(16,185,129,0.08)", borderBottom: "1px solid var(--border)" }}>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                  <span className="text-[11px] font-black" style={{ color: "#10b981" }}>
+                    ⏳ Em Operação — {rows.length} {rows.length === 1 ? "entrada" : "entradas"}
+                  </span>
+                  <span className="ml-auto flex items-center gap-2 text-[9px]" style={{ color: "var(--text-muted)" }}>
+                    <span className="text-emerald-400 font-bold">{aprov} aprovadas</span>
+                    · Req: Conf&gt;60% · Dir≥70% · R:R≥2.5
+                  </span>
+                </div>
+
+                {/* Tabela no estilo do histórico */}
+                <div className="overflow-x-auto">
+                  <table className="w-full" style={{ fontSize: "11px" }}>
+                    <thead>
+                      <tr style={{ background: "var(--bg-card)", borderBottom: "1px solid var(--border)" }}>
+                        {["Ativo","Dir","Conf IA","Variação","Status","Parâmetros","Registrado"].map(col => (
+                          <th key={col} className="px-3 py-2 text-left font-bold whitespace-nowrap"
+                            style={{ color: "var(--text-muted)" }}>{col}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map(({ h, rr, okConf, okRR, okDir, aprovada, isLong, dirC, pctAtual, motivo }, i) => (
+                        <tr key={h.id}
+                          style={{
+                            borderBottom: "1px solid var(--border)",
+                            background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
+                          }}>
+                          {/* Ativo */}
+                          <td className="px-3 py-2 font-black" style={{ color: dirC }}>
+                            {h.simbolo.replace("USDT","")}
+                          </td>
+                          {/* Dir */}
+                          <td className="px-3 py-2">
+                            <span className="font-bold text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap"
+                              style={{ background: `${dirC}18`, color: dirC }}>
+                              {isLong ? "▲" : "▼"} {isLong ? "LONG" : "SHORT"}
+                            </span>
+                          </td>
+                          {/* Conf IA com badge dos 3 req */}
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-1">
+                              <span className="font-black tabular-nums" style={{ color: okConf ? "#10b981" : "#ef4444" }}>
+                                {h.ia_conf.toFixed(0)}%
+                              </span>
+                              <span className="text-[8px]" style={{ color: "var(--text-muted)" }}>
+                                {okConf ? "✓" : "✗"}C
+                                {" "}{okRR ? "✓" : "✗"}R:R
+                                {" "}{okDir ? "✓" : "✗"}WR
+                              </span>
+                            </div>
+                          </td>
+                          {/* Variação */}
+                          <td className="px-3 py-2 font-bold tabular-nums" style={{ color: pctAtual !== null ? (pctAtual >= 0 ? "#10b981" : "#ef4444") : "var(--text-muted)" }}>
+                            {pctAtual !== null
+                              ? `${pctAtual >= 0 ? "+" : ""}${pctAtual.toFixed(2)}%`
+                              : `@ R$${h.preco_entrada.toFixed(4)}`}
+                          </td>
+                          {/* Status */}
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {aprovada
+                              ? <span className="font-bold text-[10px] text-emerald-400">✅ APROVADA</span>
+                              : <span className="font-bold text-[10px] text-amber-400">⚠️ FORA REQ</span>}
+                          </td>
+                          {/* Parâmetros */}
+                          <td className="px-3 py-2 max-w-[160px] truncate" style={{ color: "var(--text-muted)" }}
+                            title={motivo}>
+                            {motivo}
+                          </td>
+                          {/* Hora */}
+                          <td className="px-3 py-2 tabular-nums whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
+                            {new Date(h.registrado_em).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Calibração ativa banner */}
           {cal.calibrado && cal.avgWR !== null && cal.avgWR < 44 && (
@@ -2491,7 +2815,7 @@ function FuturesIASinaisView({ scan, wallets, autoTrade, setAutoTrade }:
               style={{ background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.3)" }}>
               <span className="text-base shrink-0">🧠</span>
               <div className="flex-1 min-w-0">
-                <div className="text-xs font-bold" style={{ color: "#a78bfa" }}>Auto-calibração ativa — buscando 51%+ de acerto</div>
+                <div className="text-xs font-bold" style={{ color: "#a78bfa" }}>Auto-calibração ativa — buscando 45%+ de acerto</div>
                 <div className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>{cal.resumo}</div>
               </div>
               <button onClick={() => setModo("aprendizado")} className="shrink-0 text-[9px] px-2 py-1 rounded-lg font-bold"
@@ -2542,7 +2866,7 @@ function FuturesIASinaisView({ scan, wallets, autoTrade, setAutoTrade }:
                 <div key={r.label} className="flex items-center gap-1 px-2 py-1 rounded-lg text-[9px]"
                   style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
                   <span style={{ color: "var(--text-secondary)" }}>{r.label}</span>
-                  <span className="font-black" style={{ color: r.wr !== null && r.wr >= 51 ? "#10b981" : "#ef4444" }}>
+                  <span className="font-black" style={{ color: r.wr !== null && r.wr >= 45 ? "#10b981" : "#ef4444" }}>
                     {r.wr !== null ? `${r.wr.toFixed(0)}%` : "—"}
                   </span>
                   <span style={{ color: "var(--text-muted)" }}>({r.ops})</span>
@@ -2683,13 +3007,13 @@ function FutIAAprendizadoView({ learn, cal }: {
   const wrShort = learn.wr(learn.byDir["SHORT"]);
   if (!cal.calibrado) insights.push({ icon: "⏳", msg: cal.resumo, cor: "var(--text-muted)" });
   if (cal.sweetSpot)  insights.push({ icon: "🎯", msg: `Sweet spot identificado: Score ${cal.sweetSpot} — IA gerando sinais nessa faixa`, cor: "#a78bfa" });
-  if (wrLong  !== null && wrLong  < 44) insights.push({ icon: "⚠️", msg: `LONG com ${wrLong.toFixed(0)}% WR (meta: 51%+) — sinais LONG bloqueados até melhorar`, cor: "#f59e0b" });
-  if (wrShort !== null && wrShort < 44) insights.push({ icon: "⚠️", msg: `SHORT com ${wrShort.toFixed(0)}% WR (meta: 51%+) — sinais SHORT bloqueados até melhorar`, cor: "#f59e0b" });
-  if (wrLong  !== null && wrLong  >= 51) insights.push({ icon: "✅", msg: `LONG com ${wrLong.toFixed(0)}% WR — META ATINGIDA! LONG liberado.`, cor: "#10b981" });
-  if (wrShort !== null && wrShort >= 51) insights.push({ icon: "✅", msg: `SHORT com ${wrShort.toFixed(0)}% WR — META ATINGIDA! SHORT liberado.`, cor: "#10b981" });
-  if (wrLong  !== null && wrLong  >= 44 && wrLong  < 51) insights.push({ icon: "📈", msg: `LONG em ${wrLong.toFixed(0)}% — quase na meta de 51%+`, cor: "#f59e0b" });
-  if (wrShort !== null && wrShort >= 44 && wrShort < 51) insights.push({ icon: "📈", msg: `SHORT em ${wrShort.toFixed(0)}% — quase na meta de 51%+`, cor: "#f59e0b" });
-  if (cal.avgWR !== null && cal.avgWR >= 51) insights.push({ icon: "🏆", msg: `WR média ${cal.avgWR.toFixed(0)}% — META GLOBAL ATINGIDA! IA operando livremente`, cor: "#10b981" });
+  if (wrLong  !== null && wrLong  < 38) insights.push({ icon: "⚠️", msg: `LONG com ${wrLong.toFixed(0)}% WR (meta: 45%+) — sinais LONG bloqueados até melhorar`, cor: "#f59e0b" });
+  if (wrShort !== null && wrShort < 38) insights.push({ icon: "⚠️", msg: `SHORT com ${wrShort.toFixed(0)}% WR (meta: 45%+) — sinais SHORT bloqueados até melhorar`, cor: "#f59e0b" });
+  if (wrLong  !== null && wrLong  >= 45) insights.push({ icon: "✅", msg: `LONG com ${wrLong.toFixed(0)}% WR — META ATINGIDA! LONG liberado.`, cor: "#10b981" });
+  if (wrShort !== null && wrShort >= 45) insights.push({ icon: "✅", msg: `SHORT com ${wrShort.toFixed(0)}% WR — META ATINGIDA! SHORT liberado.`, cor: "#10b981" });
+  if (wrLong  !== null && wrLong  >= 38 && wrLong  < 45) insights.push({ icon: "📈", msg: `LONG em ${wrLong.toFixed(0)}% — quase na meta de 45%+`, cor: "#f59e0b" });
+  if (wrShort !== null && wrShort >= 38 && wrShort < 45) insights.push({ icon: "📈", msg: `SHORT em ${wrShort.toFixed(0)}% — quase na meta de 45%+`, cor: "#f59e0b" });
+  if (cal.avgWR !== null && cal.avgWR >= 45) insights.push({ icon: "🏆", msg: `WR média ${cal.avgWR.toFixed(0)}% — META GLOBAL ATINGIDA! IA operando livremente`, cor: "#10b981" });
   const gradeAp = learn.wr(learn.byGrade["A+"]);
   if (gradeAp !== null && gradeAp >= 55) insights.push({ icon: "⭐", msg: `Grade A+ com ${gradeAp.toFixed(0)}% WR — priorizar ativos Grade A+`, cor: "#f59e0b" });
   if (learn.totalTrades === 0) insights.push({ icon: "🤖", msg: "Sem histórico ainda. Ligue o Auto Trade para a IA começar a aprender.", cor: "var(--text-muted)" });
@@ -2710,8 +3034,8 @@ function FutIAAprendizadoView({ learn, cal }: {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { label: "Total Ops", val: String(learn.totalTrades), cor: "var(--text-primary)" },
-          { label: "Win Rate", val: learn.totalTrades > 0 ? `${(learn.totalWins / learn.totalTrades * 100).toFixed(0)}%` : "—", cor: learn.totalTrades > 0 && learn.totalWins / learn.totalTrades >= 0.51 ? "#10b981" : "#ef4444" },
-          { label: "Meta 51%", val: learn.totalTrades > 0 ? (learn.totalWins / learn.totalTrades >= 0.51 ? "✅ Atingida" : `Faltam ${((0.51 - learn.totalWins / learn.totalTrades) * learn.totalTrades).toFixed(0)} wins`) : "—", cor: learn.totalTrades > 0 && learn.totalWins / learn.totalTrades >= 0.51 ? "#10b981" : "#f59e0b" },
+          { label: "Win Rate", val: learn.totalTrades > 0 ? `${(learn.totalWins / learn.totalTrades * 100).toFixed(0)}%` : "—", cor: learn.totalTrades > 0 && learn.totalWins / learn.totalTrades >= 0.45 ? "#10b981" : "#ef4444" },
+          { label: "Meta 45%", val: learn.totalTrades > 0 ? (learn.totalWins / learn.totalTrades >= 0.45 ? "✅ Atingida" : `Faltam ${Math.max(0, Math.ceil(0.45 * learn.totalTrades - learn.totalWins))} wins`) : "—", cor: learn.totalTrades > 0 && learn.totalWins / learn.totalTrades >= 0.45 ? "#10b981" : "#f59e0b" },
           { label: "P&L Auto Trade", val: `${learn.totalPnl >= 0 ? "+" : ""}R$ ${Math.abs(learn.totalPnl).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`, cor: learn.totalPnl >= 0 ? "#10b981" : "#ef4444" },
         ].map(({ label, val, cor }) => (
           <div key={label} className="p-3 rounded-xl" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
@@ -2804,7 +3128,7 @@ function FutIAHistoricoView({ historico, wallets, onRemover, onVerificar }: {
   onRemover: (id: string) => void;
   onVerificar: (id: string) => Promise<void>;
 }) {
-  const [fonte, setFonte]     = useState<"auto" | "manual">("auto");
+  const [fonte, setFonte]     = useState<"auto" | "manual">("manual");
   const [dirFilt, setDirFilt] = useState<"ALL" | "LONG" | "SHORT">("ALL");
   const [verificando, setVerificando] = useState<string | null>(null);
   const [pagina, setPagina]   = useState(0);
@@ -2851,10 +3175,10 @@ function FutIAHistoricoView({ historico, wallets, onRemover, onVerificar }: {
 
       {/* Toggles fonte + direção */}
       <div className="flex flex-wrap gap-2 justify-between">
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           {([
-            { k: "auto" as const,   label: `Auto Trade (${totalAuto})` },
-            { k: "manual" as const, label: `Registros Manuais (${totalManual})` },
+            { k: "manual" as const, label: `📋 Sinais IA (${totalManual})` },
+            { k: "auto" as const,   label: `🎓 Aprendizado (${totalAuto})` },
           ]).map(({ k, label }) => (
             <button key={k} onClick={() => { setFonte(k); setPagina(0); }}
               className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
@@ -2882,9 +3206,19 @@ function FutIAHistoricoView({ historico, wallets, onRemover, onVerificar }: {
         </div>
       </div>
 
-      {/* ── AUTO TRADE ── */}
+      {/* ── APRENDIZADO (SIMULAÇÕES) ── */}
       {fonte === "auto" && (
         <>
+          {/* Disclaimer simulação */}
+          <div className="flex items-start gap-3 p-3 rounded-xl"
+            style={{ background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.3)" }}>
+            <span className="text-base shrink-0">🎓</span>
+            <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+              <span className="font-bold" style={{ color: "#a78bfa" }}>Simulações de Aprendizado — </span>
+              Operações virtuais executadas pelos perfis de IA para aprendizado. <strong>Não impactam os resultados oficiais.</strong> São usadas apenas para calibrar os sinais futuros.
+            </div>
+          </div>
+
           {/* Stats globais */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
@@ -2906,13 +3240,13 @@ function FutIAHistoricoView({ historico, wallets, onRemover, onVerificar }: {
               { dir: "LONG",  wr: wrLong,  ops: autoLong.length,  wins: autoLong.filter(t=>(t.pnl_brl??0)>0).length,  cor: "#10b981" },
               { dir: "SHORT", wr: wrShort, ops: autoShort.length, wins: autoShort.filter(t=>(t.pnl_brl??0)>0).length, cor: "#ef4444" },
             ].map(({ dir, wr, ops, wins, cor }) => (
-              <div key={dir} className="p-3 rounded-xl" style={{ background: "var(--bg-card)", border: `1px solid ${wr !== null && wr >= 51 ? cor + "55" : "var(--border)"}` }}>
+              <div key={dir} className="p-3 rounded-xl" style={{ background: "var(--bg-card)", border: `1px solid ${wr !== null && wr >= 45 ? cor + "55" : "var(--border)"}` }}>
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-bold" style={{ color: cor }}>{dir === "LONG" ? "▲" : "▼"} {dir}</span>
-                  {wr !== null && wr >= 51 && <span className="text-[9px] font-bold text-emerald-400">✅ META</span>}
-                  {wr !== null && wr < 44 && <span className="text-[9px] font-bold text-red-400">⚠️ Baixo</span>}
+                  {wr !== null && wr >= 45 && <span className="text-[9px] font-bold text-emerald-400">✅ META</span>}
+                  {wr !== null && wr < 38 && <span className="text-[9px] font-bold text-red-400">⚠️ Baixo</span>}
                 </div>
-                <div className="text-2xl font-black tabular-nums mt-1" style={{ color: wr !== null && wr >= 51 ? "#10b981" : wr !== null && wr >= 44 ? "#f59e0b" : "#ef4444" }}>
+                <div className="text-2xl font-black tabular-nums mt-1" style={{ color: wr !== null && wr >= 45 ? "#10b981" : wr !== null && wr >= 38 ? "#f59e0b" : "#ef4444" }}>
                   {wr !== null ? `${wr.toFixed(1)}%` : "—"}
                 </div>
                 <div className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
@@ -3001,15 +3335,15 @@ function FutIAHistoricoView({ historico, wallets, onRemover, onVerificar }: {
         </>
       )}
 
-      {/* ── MANUAL ── */}
+      {/* ── SINAIS IA REGISTRADOS ── */}
       {fonte === "manual" && (
         <>
           {manualFiltered.length === 0 ? (
             <div className="text-center py-16 rounded-xl" style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
               <div className="text-3xl mb-3">📋</div>
-              <div className="text-sm font-bold" style={{ color: "var(--text-secondary)" }}>Nenhuma entrada registrada manualmente</div>
+              <div className="text-sm font-bold" style={{ color: "var(--text-secondary)" }}>Nenhum sinal registrado ainda</div>
               <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-                Em "Sinais IA", clique em "📌 Registrar Entrada" nos sinais que você abrir
+                Na aba "Sinais IA", clique em "📌 Registrar Entrada" para acompanhar as entradas aqui com resultado (Gain/Loss/Aberto).
               </div>
             </div>
           ) : (
@@ -4033,7 +4367,7 @@ function FuturesScalpView({
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function FuturesPage() {
-  const [view, setView]             = useState<"ranking" | "carteiras" | "comparativo" | "banco" | "ia" | "scalp" | "bots">("ranking");
+  const [view, setView]             = useState<"ranking" | "carteiras" | "comparativo" | "banco" | "ia" | "ia_tiro" | "scalp" | "bots">("ranking");
   const [autoTrade, setAutoTrade]   = useState(true);
   const [activePerfilId, setActivePerfilId] = useState("f_mod_normal");
   const [scan, setScan]             = useState<FuturesScanData | null>(null);
@@ -4197,7 +4531,7 @@ export default function FuturesPage() {
       className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
         view === v ? "bg-[var(--text-primary)] text-[var(--bg)]" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--border)]/30"}`}>
       <span>{icon}</span>{label}
-      {(v === "carteiras" || v === "ia") && autoTrade && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+      {(v === "carteiras" || v === "ia" || v === "ia_tiro") && autoTrade && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
     </button>
   );
 
@@ -4268,7 +4602,8 @@ export default function FuturesPage() {
         <TabBtn v="carteiras"   label="Carteiras"   icon="💼" />
         <TabBtn v="scalp"       label="Scalp"       icon="⚡" />
         <TabBtn v="bots"        label="Bots"        icon="🤖" />
-        <TabBtn v="ia"          label="IA Análise"  icon="🧠" />
+        <TabBtn v="ia"          label="IA Análise"        icon="🧠" />
+        <TabBtn v="ia_tiro"     label="IA Tiro Curto"     icon="⚡" />
         <TabBtn v="comparativo" label="Comparativo" icon="⚖️" />
         <TabBtn v="banco"       label="Banco"       icon="🗄️" />
       </div>
@@ -4310,7 +4645,35 @@ export default function FuturesPage() {
           wallets={wallets}
           autoTrade={autoTrade}
           setAutoTrade={setAutoTrade}
+          tabKey="ia"
         />
+      )}
+
+      {/* IA Análise Tiro Curto — TP 1–2% / SL 0.4% / Leverage 5x–15x por confiança */}
+      {view === "ia_tiro" && (
+        <div className="flex flex-col gap-3">
+          {/* Badge identificador */}
+          <div className="flex items-center gap-2 px-4 py-2 rounded-xl"
+            style={{ background: "rgba(251,146,60,0.1)", border: "1px solid rgba(251,146,60,0.3)" }}>
+            <span className="text-sm">⚡</span>
+            <span className="text-xs font-black" style={{ color: "#fb923c" }}>IA Análise Tiro Curto</span>
+            <span className="text-[10px] ml-auto" style={{ color: "var(--text-muted)" }}>
+              Alvo: TP 1–1.5% · SL 0.4% · R:R 2.5–3.75
+            </span>
+          </div>
+          <FuturesIASinaisView
+            scan={scan}
+            wallets={wallets}
+            autoTrade={autoTrade}
+            setAutoTrade={setAutoTrade}
+            tpMin={0.010}
+            tpMax={0.020}
+            slFixed={0.004}
+            leverMin={5}
+            leverMax={15}
+            tabKey="ia_tiro"
+          />
+        </div>
       )}
 
       {/* Comparativo */}

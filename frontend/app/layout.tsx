@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Sora } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
-import { Header } from "@/components/Header";
+import { LayoutShell } from "@/components/LayoutShell";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -19,9 +19,9 @@ const sora = Sora({
 });
 
 export const metadata: Metadata = {
-  title: "AllWin — Análise Cripto",
+  title: "AllWin — Plataforma Quant",
   description:
-    "Plataforma de análise técnica, sinais IA, paper trading e execução real para criptomoedas.",
+    "Plataforma quantitativa de criptomoedas: Cérebro Central, sinais IA, paper trading e execução real na Binance.",
 };
 
 export default function RootLayout({
@@ -37,10 +37,7 @@ export default function RootLayout({
     >
       <body className="min-h-screen flex flex-col">
         <Providers>
-          <Header />
-          <div className="pt-14 flex-1 flex flex-col">
-            {children}
-          </div>
+          <LayoutShell>{children}</LayoutShell>
         </Providers>
       </body>
     </html>

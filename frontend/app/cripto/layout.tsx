@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import { BarChart2, Zap, BrainCircuit, Repeat2, Bolt, CheckCircle2, Cpu } from "lucide-react";
 import { CoinProvider } from "./CoinContext";
 
@@ -62,6 +63,7 @@ const STATIC_TABS = [
 
 export default function CriptoLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [hoveredHref, setHoveredHref] = useState<string | null>(null);
 
   const motorMatch = pathname.match(/^\/cripto\/motor\/([A-Z]+)$/i);
   const motorSimbol = motorMatch ? motorMatch[1].toUpperCase() : null;
@@ -81,50 +83,61 @@ export default function CriptoLayout({ children }: { children: React.ReactNode }
 
   return (
     <CoinProvider>
-      {/* Tab bar — fixed below the main header (top-14 = 56px) */}
+      {/* Tab bar — fixed below the main header (top-[54px]) */}
       <div
-        className="fixed top-14 left-0 right-0 z-40 border-b"
+        className="fixed left-0 right-0 z-40"
         style={{
+          top: 54,
           background: "rgba(9,9,11,0.92)",
           backdropFilter: "blur(16px)",
           WebkitBackdropFilter: "blur(16px)",
-          borderColor: "var(--border)",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
         }}
       >
         <div className="max-w-7xl mx-auto px-4">
-          <div className="flex items-center gap-0.5 py-2 no-scrollbar">
+          <div className="flex items-end gap-0 no-scrollbar overflow-x-auto">
             {tabs.map(({ href, label, Icon, active, color }) => {
               const isActive = active(pathname);
+              const isHovered = hoveredHref === href;
               return (
                 <Link
                   key={href}
                   href={href}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] whitespace-nowrap no-underline transition-all duration-150 shrink-0"
+                  className="relative flex items-center gap-1.5 px-3 py-2.5 text-[12px] whitespace-nowrap no-underline transition-all duration-150 shrink-0"
                   style={{
                     fontWeight: isActive ? 600 : 400,
-                    color: isActive ? "#ffffff" : "var(--text-muted)",
-                    background: isActive
-                      ? `${color}25`
-                      : "transparent",
-                    border: isActive
-                      ? `1px solid ${color}40`
-                      : "1px solid transparent",
+                    color: isActive ? "#fff" : isHovered ? "var(--text-secondary)" : "var(--text-muted)",
+                    background: isActive ? `${color}10` : isHovered ? "rgba(255,255,255,0.03)" : "transparent",
+                    borderBottom: isActive ? `2px solid ${color}` : "2px solid transparent",
                   }}
-                  onMouseEnter={(e) => {
-                    if (!isActive) {
-                      e.currentTarget.style.color = "var(--text-secondary)";
-                      e.currentTarget.style.background = "rgba(255,255,255,0.04)";
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isActive) {
-                      e.currentTarget.style.color = "var(--text-muted)";
-                      e.currentTarget.style.background = "transparent";
-                    }
-                  }}
+                  onMouseEnter={() => setHoveredHref(href)}
+                  onMouseLeave={() => setHoveredHref(null)}
                 >
-                  <Icon size={12} style={{ color: isActive ? color : "currentColor", flexShrink: 0 }} />
+                  <Icon
+                    size={11}
+                    style={{
+                      color: isActive ? color : isHovered ? color : "currentColor",
+                      flexShrink: 0,
+                      filter: isActive ? `drop-shadow(0 0 5px ${color}90)` : "none",
+                      transition: "filter 0.15s, color 0.15s",
+                    }}
+                  />
                   {label}
+                  {/* Glow line under active tab */}
+                  {isActive && (
+                    <span
+                      style={{
+                        position: "absolute",
+                        bottom: -1,
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        width: "70%",
+                        height: 2,
+                        background: `linear-gradient(90deg, transparent, ${color}CC, transparent)`,
+                        filter: `blur(1px)`,
+                      }}
+                    />
+                  )}
                 </Link>
               );
             })}
@@ -132,8 +145,8 @@ export default function CriptoLayout({ children }: { children: React.ReactNode }
         </div>
       </div>
 
-      {/* Content — offset: header (56px) + tab bar (~44px) */}
-      <div className="pt-[100px]">{children}</div>
+      {/* Content — offset: header (54px) + accent line (2px) + tab bar (~40px) */}
+      <div className="pt-[96px]">{children}</div>
     </CoinProvider>
   );
 }
